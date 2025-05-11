@@ -68,6 +68,12 @@ async def handle_request(request: Request):
     
     if intent == "confirm-order - context: ongoing-order-confirmation":
         return confirm_order_placement(parameters, session_id)
+    
+    if intent == "cancel-order - context: ongoing-order-confirmation":
+        return cancel_order(parameters, session_id)
+
+    if intent == "remove-items - context: ongoing-order-confirmation":
+        return remove_items(parameters, session_id)
 
     if intent == "end-conversation - context: ongoing-order-complete":
         return end_conversation(parameters, session_id)
@@ -1146,5 +1152,117 @@ def end_conversation(parameters: dict, session_id: str):
     # Xóa session sau khi hoàn tất
     if session_id in inprogress_orders:
         del inprogress_orders[session_id]
+
+    return JSONResponse(content={"fulfillmentText": response_text})
+
+
+def cancel_order(parameters: dict, session_id: str):
+    if session_id not in inprogress_orders:
+        return JSONResponse(content={
+            "fulfillmentText": "No order found to cancel. You can start a new order if you'd like!"
+        })
+
+    # Xóa toàn bộ session
+    del inprogress_orders[session_id]
+
+    # Sử dụng default response từ Dialogflow
+    return JSONResponse(content={"fulfillmentText": "Got it! Your order has been canceled as requested. If you change your mind, feel free to start a new order anytime. Thank you for visiting us. Let me know if there's anything else I can help with!"})
+
+def remove_items(parameters: dict, session_id: str):
+    if session_id not in inprogress_orders:
+        return JSONResponse(content={
+            "fulfillmentText": "No order found to modify. You can start a new order if you'd like!"
+        })
+
+    order_list = inprogress_orders[session_id].get("order_list", [])
+    if not order_list:
+        return JSONResponse(content={
+            "fulfillmentText": "Your order is empty. You can start adding items if you'd like!"
+        })
+
+    # Lấy danh sách product_id cần xóa
+    product_ids_to_remove = parameters.get("number", [])
+    if not product_ids_to_remove:
+        return JSONResponse(content={
+            "fulfillmentText": "Please specify the product ID(s) you want to remove (e.g., 'Remove item ID 2')."
+        })
+
+    # Chuyển product_ids_to_remove thành danh sách các số nguyên
+    try:
+        product_ids_to_remove = [int(pid) for pid in product_ids_to_remove]
+    except (ValueError, TypeError):
+        return JSONResponse(content={
+            "fulfillmentText": "Invalid product ID(s). Please provide valid numeric IDs (e.g., 'Remove item ID 2')."
+        })
+
+    # Danh sách sản phẩm bị xóa
+    removed_items = []
+    updated_order_list = []
+
+    for product_id, quantity in order_list:
+        if product_id in product_ids_to_remove:
+            # Lấy thông tin sản phẩm để hiển thị tên
+            product = db_helper.get_list_products_by_id(product_id)
+            if product:
+                product_name = product[0][0]
+                removed_items.append(product_name)
+        else:
+            updated_order_list.append((product_id, quantity))
+
+    if not removed_items:
+        return JSONResponse(content={
+            "fulfillmentText": "None of the specified items were found in your order. Please check the IDs and try again."
+        })
+
+    # Cập nhật order_list trong session
+    inprogress_orders[session_id]["order_list"] = updated_order_list
+
+    # Nếu order_list trống sau khi xóa, hủy toàn bộ đơn hàng
+    if not updated_order_list:
+        del inprogress_orders[session_id]
+        return JSONResponse(content={
+            "fulfillmentText": "All items have been removed, and your order has been canceled. You can start a new order if you'd like!"
+        })
+
+    # Tính lại tổng giá trị đơn hàng
+    total_amount = 0
+    for product_id, quantity in updated_order_list:
+        product = db_helper.get_list_products_by_id(product_id)
+        if not product:
+            continue
+        price = float(product[0][2])
+        total_amount += price * quantity
+
+    # Xóa mã giảm giá hiện tại (vì tổng giá trị đơn hàng đã thay đổi)
+    if "discount" in inprogress_orders[session_id]:
+        del inprogress_orders[session_id]["discount"]
+
+    # Lấy danh sách mã giảm giá hợp lệ
+    promotions = db_helper.get_available_promotions(total_amount)
+    if not promotions:
+        return JSONResponse(content={
+            "fulfillmentText": (
+                f"The following item(s) have been successfully removed from your order:\n"
+                f"• {' • '.join(removed_items)}\n"
+                f"Your updated order total is now ${total_amount:.2f}.\n"
+                "No discount codes are available for your current order total. "
+                "Please provide your email or phone number to identify yourself (e.g., 'My email is john.doe@example.com')."
+            )
+        })
+
+    # Hiển thị danh sách mã giảm giá
+    promo_text = "Here are the available discount codes for your order:\n"
+    for promo in promotions:
+        promo_code, discount_value = promo[1], promo[2]
+        promo_text += f"• {promo_code}: {discount_value}% off (minimum order ${promo[3]:.2f})\n"
+
+    response_text = (
+        f"The following item(s) have been successfully removed from your order:\n"
+        f"• {' • '.join(removed_items)}\n"
+        f"Your updated order total is now ${total_amount:.2f}.\n"
+        f"Since your order total has changed, let's check if you can apply any discount codes again.\n"
+        f"{promo_text}\n"
+        "Which of these discount codes would you like to use? You can enter the code of the promotion you'd like to apply (e.g., SUMMER15)."
+    )
 
     return JSONResponse(content={"fulfillmentText": response_text})

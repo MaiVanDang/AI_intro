@@ -344,3 +344,22 @@ def place_order(order_details: dict, session_id: str):
         return None
     finally:
         cursor.close()
+
+def get_available_promotions(minimum_order_value: float):
+    cursor = cnx.cursor()
+    try:
+        query = """
+            SELECT Promotion_ID, Coupon_Code, Discount_Value, Minimum_Order
+            FROM Promotion
+            WHERE Status = 'active'
+            AND Minimum_Order <= %s
+            AND (End_Date IS NULL OR End_Date >= CURRENT_DATE)
+        """
+        cursor.execute(query, (minimum_order_value,))
+        results = cursor.fetchall()
+        return results  # (promotion_id, coupon_code, discount_value, minimum_order)
+    except Exception as e:
+        print(f"[ERROR] Failed to get available promotions: {e}")
+        return []
+    finally:
+        cursor.close()
