@@ -2,6 +2,7 @@ from venv import logger
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import db_helper
+from datetime import datetime, timedelta
 
 app = FastAPI()
 
@@ -33,13 +34,43 @@ async def handle_request(request: Request):
     if intent == "confirm.product.order : context: ongoing-order":
         return confirm_order(parameters, session_id)
     elif intent == "Update.order : context: edit-order":
-            return update_order(parameters, session_id)
+        return update_order(parameters, session_id)
     
-    if intent =="user.confirm_checkout : context: ongoing-order":
+    if intent == "user.confirm_checkout : context: ongoing-order":
         return proceed_to_checkout(parameters, session_id)
     
-    if intent =="apply-coupon-code : context: ongoing-applyCode":
+    if intent == "apply-coupon-code : context: ongoing-applyCode":
         return apply_coupon_code(parameters, session_id)
+    
+    if intent == "identify-customer - context: ongoing-identify":
+        return identify_customer(parameters, session_id)
+
+    if intent == "confirm-customer-info - context: ongoing-confirm-info":
+        return confirm_customer_info(parameters, session_id)
+
+    if intent == "use-default-address - context: ongoing-address":
+        return use_default_address(parameters, session_id)
+    
+    if intent == "new-shipping-address - context: ongoing-address":
+        return request_new_shipping_address(parameters, session_id)
+
+    if intent == "provide-new-shipping-address - context: ongoing-new-address":
+        return process_new_shipping_address(parameters, session_id)
+
+    if intent == "confirm-new-address - context: ongoing-new-address":
+        return confirm_new_address(parameters, session_id)
+    
+    if intent == "confirm-shipping-method - context: ongoing-shipping-method":
+        return confirm_shipping_method(parameters, session_id)   
+
+    if intent == "select-payment-method - context: ongoing-payment-method":
+        return select_payment_method(parameters, session_id) 
+    
+    if intent == "confirm-order - context: ongoing-order-confirmation":
+        return confirm_order_placement(parameters, session_id)
+
+    if intent == "end-conversation - context: ongoing-order-complete":
+        return end_conversation(parameters, session_id)
 
 def search_by_brand(parameters: dict):
     brand_name_item = parameters["brand-name-item"]
@@ -47,7 +78,7 @@ def search_by_brand(parameters: dict):
 
     if products:
         response_text = "id    product_name\n"
-        for prod_id, prod_name in products:
+        for prod_id, prod_name in products: 
             response_text += f"{prod_id:<5} {prod_name}\n"
         return JSONResponse(content={"fulfillmentText": response_text.strip()})
     else:
@@ -158,11 +189,9 @@ def confirm_order(parameters: dict, session_id: str):
                 stock_quantity
             ) = product
 
-            # Convert stock_quantity to int if it's a string
             if isinstance(stock_quantity, str):
                 stock_quantity = int(stock_quantity)
                 
-            # Convert quantity to int if it's a float
             if isinstance(quantity, float):
                 quantity = int(quantity) 
 
@@ -178,9 +207,12 @@ def confirm_order(parameters: dict, session_id: str):
             )
             order_list.append((product_id, quantity))
 
-    # Save the confirmed items to session if any
     if session_id and order_list:
-        inprogress_orders[session_id] = order_list
+        inprogress_orders[session_id] = {
+            "order_list": order_list,
+            "customer_info": None,
+            "shipping_address": None
+        }
 
     if not confirm_lines:
         messages = []
@@ -203,7 +235,6 @@ def confirm_order(parameters: dict, session_id: str):
     return JSONResponse(content={"fulfillmentText": confirm_text})
 
 def update_order(parameters: dict, session_id: str) -> JSONResponse:
-    
     product_ids = parameters.get("number", [])
     quantities = parameters.get("number-integer", [])
     state = parameters.get("state")
@@ -224,7 +255,7 @@ def update_order(parameters: dict, session_id: str) -> JSONResponse:
     if session_id not in inprogress_orders:
         return JSONResponse(content={"fulfillmentText": "No pending orders found. Please create a new order first."})
 
-    current_order = inprogress_orders[session_id]
+    current_order = inprogress_orders[session_id]["order_list"]
     updated = False
     not_found_lines = []
     insufficient_stock_lines = []
@@ -241,16 +272,6 @@ def update_order(parameters: dict, session_id: str) -> JSONResponse:
                     continue
 
                 for product in products:
-                    # Dựa trên truy vấn SQL trong pgAdmin, thứ tự các cột là:
-                    # 0: product_name
-                    # 1: product_description
-                    # 2: price
-                    # 3: specifications
-                    # 4: brand_name
-                    # 5: stock_quantity
-                    # 6: brand_description
-                    # 7: origin_country
-                    
                     product_name = product[0]
                     price = product[2]
                     stock_quantity = product[5]
@@ -265,7 +286,7 @@ def update_order(parameters: dict, session_id: str) -> JSONResponse:
                     
                 if stock_quantity < quantity:
                     insufficient_stock_lines.append(
-                        f"- {name} (ID: {product_id}) only has {stock_quantity} in store, but you requested {quantity}."
+                        f"- {product_name} (ID: {product_id}) only has {stock_quantity} in store, but you requested {quantity}."
                     )
                     continue
 
@@ -290,7 +311,7 @@ def update_order(parameters: dict, session_id: str) -> JSONResponse:
                 not_found_lines.append(f"- ID product '{product_id}' invalid.")
 
     if updated:
-        inprogress_orders[session_id] = current_order
+        inprogress_orders[session_id]["order_list"] = current_order
         logger.info(f"Updated order in session {session_id}: {current_order}")
 
     current_products = []
@@ -342,8 +363,8 @@ def update_order(parameters: dict, session_id: str) -> JSONResponse:
     return JSONResponse(content={"fulfillmentText": response_text})
 
 def proceed_to_checkout(parameters: dict, session_id: str):
-    # 1. Lấy đơn hàng từ session
-    order_list = inprogress_orders.get(session_id, [])
+    session_data = inprogress_orders.get(session_id, {})
+    order_list = session_data.get("order_list", [])
 
     if not order_list:
         return JSONResponse(content={"fulfillmentText": "You have not added any items to your cart yet."})
@@ -351,20 +372,17 @@ def proceed_to_checkout(parameters: dict, session_id: str):
     total_amount = 0
     order_summary_lines = []
 
-    # 2. Tính tổng tiền
     for product_id, quantity in order_list:
         products = db_helper.get_list_products_by_id(product_id)
         if not products:
             continue
         product = products[0]
         
-        # Trích xuất thông tin sản phẩm từ tuple đúng cách
         product_name = product[0]
         price = product[2]
         brand_name = product[4]
         origin_country = product[7]
 
-        # Nếu price là chuỗi, chuyển về float
         if isinstance(price, str):
             price = float(price)
 
@@ -375,7 +393,6 @@ def proceed_to_checkout(parameters: dict, session_id: str):
             f"- {product_name} x{quantity} (${price:.2f} each) = ${line_total:.2f} | Brand: {brand_name} from {origin_country}"
         )
 
-    # 3. Tìm khuyến mãi thỏa điều kiện
     promotions = db_helper.get_valid_promotions(min_order=total_amount)
 
     if promotions:
@@ -387,7 +404,6 @@ def proceed_to_checkout(parameters: dict, session_id: str):
     else:
         promotion_text = "\n\n(There are currently no promotions available for your order.)"
 
-    # 4. Trả phản hồi cho người dùng
     response_text = (
         f"🧾 Your current order total is: ${total_amount:.2f}\n"
         + "\n".join(order_summary_lines)
@@ -399,7 +415,8 @@ def proceed_to_checkout(parameters: dict, session_id: str):
 
 def apply_coupon_code(parameters: dict, session_id: str):
     coupon_code = parameters.get("coupon_code", "").strip().upper()
-    order_list = inprogress_orders.get(session_id, [])
+    session_data = inprogress_orders.get(session_id, {})
+    order_list = session_data.get("order_list", [])
 
     if not coupon_code or not order_list:
         return JSONResponse(content={"fulfillmentText": "Invalid coupon or no items in your cart."})
@@ -417,35 +434,717 @@ def apply_coupon_code(parameters: dict, session_id: str):
     if not promotion:
         return JSONResponse(content={"fulfillmentText": f"Sorry, the code {coupon_code} is not valid."})
 
-    promo_code, discount_value = promotion
+    # Sửa lại: Lấy coupon_code và discount_value từ promotion
+    _, promo_code, discount_value = promotion  # promotion trả về (promotion_id, coupon_code, discount_value)
 
     discount_amount = total_amount * (float(discount_value) / 100)
-
     total_after_discount = total_amount - discount_amount
+
+    # Lưu thông tin discount vào session
+    inprogress_orders[session_id]["discount"] = {
+        "promo_code": promo_code,
+        "discount_amount": discount_amount
+    }
 
     response_text = (
         f"Thanks! Your promo code has been applied. Order Summary:\n"
         f"Total before discount: ${total_amount:.2f}\n"
         f"Discount ({promo_code}): – ${discount_amount:.2f}\n"
         f"Total after discount: ${total_after_discount:.2f}\n\n"
-        "Would you like to use your default address, or do you want to enter a new one?\n"
-        "You can reply with: 'Use default address' or 'New address'."
+        "Please provide your email or phone number to identify yourself (e.g., 'My email is john.doe@example.com' or 'My phone is 1234567890')."
     )
 
     return JSONResponse(content={"fulfillmentText": response_text})
 
-# def use_default_shipping_address(session_id: str):
-#
-#     default_address = db_helper.get_default_address_by_session(session_id)
+def identify_customer(parameters: dict, session_id: str):
+    email = parameters.get("email", "").strip()
+    phone = parameters.get("phone-number", "").strip()
 
-#     if not default_address:
-#         return JSONResponse(content={"fulfillmentText": "Sorry, we couldn't find your default shipping address."})
+    if not email and not phone:
+        return JSONResponse(content={
+            "fulfillmentText": "Please provide your email or phone number to identify yourself (e.g., 'My email is john.doe@example.com' or 'My phone is 1234567890')."
+        })
 
-#     response_text = (
-#         "Got it! We'll use your default shipping address as follows:\n"
-#         f"{default_address}\n\n"
-#         "Please confirm if this is correct or say 'Change address' to provide a new one."
-#     )
+    customer = db_helper.get_customer_by_email_or_phone(email, phone)
+    if customer:
+        customer_id = customer[0]
+        customer_info = db_helper.get_customer_info(customer_id)
+        if customer_info and len(customer_info) >= 3:
+            customer_text = (
+                f"Email: {customer_info[1]}\n"
+                f"Phone: {customer_info[2]}"
+            )
+            if session_id not in inprogress_orders:
+                inprogress_orders[session_id] = {"order_list": [], "customer_info": None, "shipping_address": None}
+            inprogress_orders[session_id]["customer_info"] = {"email": customer_info[1], "phone": customer_info[2]}
+            return JSONResponse(content={
+                "fulfillmentText": f"Thank you! Your information has been found:\n{customer_text}\nPlease confirm if this is correct. Reply with 'Yes, that’s correct' or 'No, that’s wrong'."
+            })
+    return JSONResponse(content={
+        "fulfillmentText": "Customer not found. Please provide a valid email or phone number (e.g., 'My email is john.doe@example.com' or 'My phone is 1234567890')."
+    })
 
-#     return JSONResponse(content={"fulfillmentText": response_text})
+def confirm_customer_info(parameters: dict, session_id: str):
+    confirmation = parameters.get("confirmation", "").lower()
 
+    if session_id not in inprogress_orders or not inprogress_orders[session_id].get("customer_info"):
+        return JSONResponse(content={
+            "fulfillmentText": "Session not found. Please provide your email or phone number again to identify yourself."
+        })
+
+    email = inprogress_orders[session_id]["customer_info"]["email"]
+    phone = inprogress_orders[session_id]["customer_info"]["phone"]
+
+    customer = db_helper.get_customer_by_email_or_phone(email, phone)
+    if not customer:
+        return JSONResponse(content={
+            "fulfillmentText": "Customer not found. Please provide a valid email or phone number."
+        })
+
+    customer_id = customer[0]
+    if "yes" in confirmation or "correct" in confirmation:
+        default_address = db_helper.get_default_address_by_customer(customer_id)
+        if default_address:
+            address_text = (
+                f"Receiver Name: {default_address[1]}\n"
+                f"Receiver Phone: {default_address[2]}\n"
+                f"Country: {default_address[3]}\n"
+                f"City: {default_address[4]}\n"
+                f"Province/State: {default_address[5]}\n"
+                f"Postal Code: {default_address[6]}"
+            )
+            return JSONResponse(content={
+                "fulfillmentText": f"Thank you for confirming your information!\nGot it! Your default shipping address is:\n{address_text}\nWould you like to use this address, or enter a new one? Reply with 'Use default address' or 'New address'."
+            })
+        else:
+            return JSONResponse(content={
+                "fulfillmentText": "Thank you for confirming your information!\nNo default address found. Please enter a new address with 'New address'."
+            })
+    else:
+        return JSONResponse(content={
+            "fulfillmentText": "Let’s update your information. Please provide your correct email or phone number (e.g., 'My email is john.doe@example.com' or 'My phone is 1234567890')."
+        })
+
+def use_default_address(parameters: dict, session_id: str):
+    if session_id not in inprogress_orders or not inprogress_orders[session_id].get("customer_info"):
+        return JSONResponse(content={
+            "fulfillmentText": "Session not found. Please provide your email or phone number again to identify yourself."
+        })
+
+    email = inprogress_orders[session_id]["customer_info"]["email"]
+    phone = inprogress_orders[session_id]["customer_info"]["phone"]
+
+    customer = db_helper.get_customer_by_email_or_phone(email, phone)
+    if not customer:
+        return JSONResponse(content={
+            "fulfillmentText": "Customer not found. Please provide a valid email or phone number."
+        })
+
+    customer_id = customer[0]
+    default_address = db_helper.get_default_address_by_customer(customer_id)
+    if default_address:
+        # Lưu địa chỉ mặc định vào session
+        address_id, receiver_name, receiver_phone, country, city, province_state, postal_code = default_address
+        inprogress_orders[session_id]["shipping_address"] = {
+            "address_id": address_id,
+            "receiver_name": receiver_name,
+            "receiver_phone": receiver_phone,
+            "country": country,
+            "city": city,
+            "province_state": province_state,
+            "postal_code": postal_code,
+            "is_default": True  # Địa chỉ mặc định nên có is_default là True
+        }
+
+        # Lấy danh sách phương thức giao hàng
+        shipping_methods = db_helper.get_shipping_methods()
+        if not shipping_methods:
+            return JSONResponse(content={
+                "fulfillmentText": "Sorry, no shipping methods are available at the moment. Please contact support."
+            })
+
+        # Tính tổng số lượng sản phẩm trong đơn hàng
+        order_list = inprogress_orders[session_id]["order_list"]
+        total_quantity = sum(quantity for _, quantity in order_list)
+
+        # Giả định khoảng cách (km) để tính thời gian giao hàng
+        ASSUMED_DISTANCE_KM = 100  # Giả định khoảng cách 100km (có thể thay đổi)
+
+        # Tính ngày hiện tại
+        current_date = datetime.now()
+
+        # Tạo danh sách phương thức giao hàng
+        shipping_options_text = "Here are the available shipping methods for your order:\n"
+        for idx, method in enumerate(shipping_methods, 1):
+            shipping_fee = method["cost_per_product"] * total_quantity
+            delivery_time_days = method["average_delivery_time_per_km"] * ASSUMED_DISTANCE_KM
+            estimated_date = (current_date + timedelta(days=delivery_time_days)).strftime("%Y-%m-%d")
+            shipping_options_text += (
+                f"Option {idx} - {method['method_name']}: ${shipping_fee:.2f}, "
+                f"Estimated Delivery: {estimated_date}\n"
+            )
+
+        response_text = (
+            f"Thanks for confirming your delivery address!\n"
+            f"{shipping_options_text}\n"
+            "Please let me know which shipping method you'd like to use. (For example: 'I’ll go with Express Shipping')"
+        )
+        return JSONResponse(content={"fulfillmentText": response_text})
+    else:
+        return JSONResponse(content={
+            "fulfillmentText": "No default address found. Please provide a new address with 'New address'."
+        })
+
+def request_new_shipping_address(parameters: dict, session_id: str):
+    if session_id not in inprogress_orders or not inprogress_orders[session_id].get("customer_info"):
+        return JSONResponse(content={
+            "fulfillmentText": "Session not found. Please provide your email or phone number again to identify yourself."
+        })
+
+    email = inprogress_orders[session_id]["customer_info"]["email"]
+    phone = inprogress_orders[session_id]["customer_info"]["phone"]
+
+    customer = db_helper.get_customer_by_email_or_phone(email, phone)
+    if not customer:
+        return JSONResponse(content={
+            "fulfillmentText": "Customer not found. Please provide a valid email or phone number."
+        })
+
+    response_text = (
+        "Sure! Please enter your new shipping address using the following format:\n"
+        "Receiver Name: [Your Full Name]\n"
+        "Receiver Phone: [Phone Number]\n"
+        "Country: [Country]\n"
+        "City: [City]\n"
+        "Province: [Province or State]\n"
+        "Postal Code: [ZIP or Postal Code]\n"
+        "Default: [Yes or No]\n\n"
+        "Example:\n"
+        "Receiver Name: Alex Johnson\n"
+        "Receiver Phone: +1 555-123-4567\n"
+        "Country: USA\n"
+        "City: Los Angeles\n"
+        "Province: California\n"
+        "Postal Code: 90001\n"
+        "Default: Yes"
+    )
+    return JSONResponse(content={"fulfillmentText": response_text})
+
+def process_new_shipping_address(parameters: dict, session_id: str):
+    if session_id not in inprogress_orders or not inprogress_orders[session_id].get("customer_info"):
+        return JSONResponse(content={
+            "fulfillmentText": "Session not found. Please provide your email or phone number again to identify yourself."
+        })
+
+    email = inprogress_orders[session_id]["customer_info"]["email"]
+    phone = inprogress_orders[session_id]["customer_info"]["phone"]
+
+    customer = db_helper.get_customer_by_email_or_phone(email, phone)
+    if not customer:
+        return JSONResponse(content={
+            "fulfillmentText": "Customer not found. Please provide a valid email or phone number."
+        })
+
+    customer_id = customer[0]
+
+    # Lấy các tham số từ Dialogflow và xử lý giá trị
+    receiver_name = parameters.get("person", "")
+    if isinstance(receiver_name, dict):
+        receiver_name = receiver_name.get("name", "")
+    receiver_name = receiver_name.strip() if isinstance(receiver_name, str) else ""
+
+    receiver_phone = parameters.get("phone-number", "")
+    if isinstance(receiver_phone, dict):
+        receiver_phone = receiver_phone.get("number", "")
+    receiver_phone = receiver_phone.strip() if isinstance(receiver_phone, str) else ""
+
+    country = parameters.get("geo-country", "")
+    if isinstance(country, dict):
+        country = country.get("country", "")
+    country = country.strip() if isinstance(country, str) else ""
+
+    city = parameters.get("geo-city", "")
+    if isinstance(city, dict):
+        city = city.get("city", "")
+    city = city.strip() if isinstance(city, str) else ""
+
+    province = parameters.get("province", "")
+    if isinstance(province, dict):
+        province = province.get("province", "")
+    province = province.strip() if isinstance(province, str) else ""
+
+    postal_code = parameters.get("zip-code", "")
+    if isinstance(postal_code, dict):
+        postal_code = postal_code.get("zip-code", "")
+    postal_code = postal_code.strip() if isinstance(postal_code, str) else ""
+
+    is_default = parameters.get("is_default", "")
+    if isinstance(is_default, dict):
+        is_default = is_default.get("is_default", "")
+    is_default = is_default.lower() in ["yes", "y", "true"] if isinstance(is_default, str) else False
+
+    # Kiểm tra nếu có trường nào thiếu
+    if not all([receiver_name, receiver_phone, country, city, province, postal_code]):
+        response_text = (
+            "Sorry but it looks like some information is missing or incorrectly formatted.\n"
+            "Please make sure to include all required fields using this format:\n"
+            "Receiver Name: [Your Full Name]\n"
+            "Receiver Phone: [Phone Number]\n"
+            "Country: [Country]\n"
+            "City: [City]\n"
+            "Province: [Province or State]\n"
+            "Postal Code: [ZIP or Postal Code]\n"
+            "Default: [Yes or No]\n\n"
+            "Example:\n"
+            "Receiver Name: Alex Johnson\n"
+            "Receiver Phone: +1 555-123-4567\n"
+            "Country: USA\n"
+            "City: Los Angeles\n"
+            "Province: California\n"
+            "Postal Code: 90001\n"
+            "Default: Yes"
+        )
+        return JSONResponse(content={"fulfillmentText": response_text})
+
+    # Lưu địa chỉ mới
+    new_address_id = db_helper.save_new_shipping_address(
+        customer_id,
+        receiver_name,
+        receiver_phone,
+        country,
+        city,
+        province,
+        postal_code,
+        is_default
+    )
+    if new_address_id:
+        # Đảm bảo địa chỉ được lưu vào session
+        inprogress_orders[session_id]["shipping_address"] = {
+            "address_id": new_address_id,
+            "receiver_name": receiver_name,
+            "receiver_phone": receiver_phone,
+            "country": country,
+            "city": city,
+            "province_state": province,
+            "postal_code": postal_code,
+            "is_default": is_default
+        }
+        address_text = (
+            f"Receiver Name: {receiver_name}\n"
+            f"Receiver Phone: {receiver_phone}\n"
+            f"Country: {country}\n"
+            f"City: {city}\n"
+            f"Province: {province}\n"
+            f"Postal Code: {postal_code}\n"
+            f"Is Default: {str(is_default).capitalize()}"
+        )
+        response_text = (
+            f"Great! Here is the delivery address you provided:\n{address_text}\n"
+            "Please confirm: Is this delivery address correct? (You can reply with 'Yes' to confirm, or let me know what you'd like to change.)"
+        )
+        return JSONResponse(content={"fulfillmentText": response_text})
+    else:
+        return JSONResponse(content={
+            "fulfillmentText": "Sorry, there was an error saving your new address. Please try again."
+        })
+
+def confirm_new_address(parameters: dict, session_id: str):
+    if session_id not in inprogress_orders or not inprogress_orders[session_id].get("shipping_address"):
+        return JSONResponse(content={
+            "fulfillmentText": "No shipping address found. Please provide a new address."
+        })
+
+    confirmation = parameters.get("confirmation", "").lower()
+    edit_keywords = ["change", "fix", "edit", "wrong", "incorrect", "different"]
+
+    if any(keyword in confirmation for keyword in edit_keywords):
+        response_text = (
+            "Sure! Please enter your new shipping address using the following format:\n"
+            "Receiver Name: [Your Full Name]\n"
+            "Receiver Phone: [Phone Number]\n"
+            "Country: [Country]\n"
+            "City: [City]\n"
+            "Province: [Province or State]\n"
+            "Postal Code: [ZIP or Postal Code]\n"
+            "Default: [Yes or No]\n\n"
+            "Example:\n"
+            "Receiver Name: Alex Johnson\n"
+            "Receiver Phone: +1 555-123-4567\n"
+            "Country: USA\n"
+            "City: Los Angeles\n"
+            "Province: California\n"
+            "Postal Code: 90001\n"
+            "Default: Yes"
+        )
+        return JSONResponse(content={"fulfillmentText": response_text})
+
+    if "yes" in confirmation or "correct" in confirmation:
+        # Đảm bảo địa chỉ vẫn tồn tại trong session
+        address = inprogress_orders[session_id].get("shipping_address")
+        if not address:
+            return JSONResponse(content={
+                "fulfillmentText": "No shipping address found. Please provide a new address."
+            })
+
+        # Lấy danh sách phương thức giao hàng
+        shipping_methods = db_helper.get_shipping_methods()
+        if not shipping_methods:
+            return JSONResponse(content={
+                "fulfillmentText": "Sorry, no shipping methods are available at the moment. Please contact support."
+            })
+
+        # Tính tổng số lượng sản phẩm trong đơn hàng
+        order_list = inprogress_orders[session_id]["order_list"]
+        total_quantity = sum(quantity for _, quantity in order_list)
+
+        # Giả định khoảng cách (km) để tính thời gian giao hàng
+        ASSUMED_DISTANCE_KM = 100
+
+        # Tính ngày hiện tại
+        current_date = datetime.now()
+
+        # Tạo danh sách phương thức giao hàng
+        shipping_options_text = "Here are the available shipping methods for your order:\n"
+        for idx, method in enumerate(shipping_methods, 1):
+            shipping_fee = method["cost_per_product"] * total_quantity
+            delivery_time_days = method["average_delivery_time_per_km"] * ASSUMED_DISTANCE_KM
+            estimated_date = (current_date + timedelta(days=delivery_time_days)).strftime("%Y-%m-%d")
+            shipping_options_text += (
+                f"Option {idx} - {method['method_name']}: ${shipping_fee:.2f}, "
+                f"Estimated Delivery: {estimated_date}\n"
+            )
+
+        response_text = (
+            f"Thanks for confirming your delivery address!\n"
+            f"{shipping_options_text}\n"
+            "Please let me know which shipping method you'd like to use. (For example: 'I’ll go with Express Shipping')"
+        )
+        return JSONResponse(content={"fulfillmentText": response_text})
+
+    return JSONResponse(content={
+        "fulfillmentText": "Please confirm if the address is correct (e.g., 'Yes' or let me know what to change)."
+    })
+
+def confirm_shipping_method(parameters: dict, session_id: str):
+    if session_id not in inprogress_orders:
+        return JSONResponse(content={
+            "fulfillmentText": "Session not found. Please start your order again."
+        })
+
+    # Lấy phương thức vận chuyển được chọn
+    shipping_method_name = parameters.get("shipping-method", "")
+    if not shipping_method_name:
+        return JSONResponse(content={
+            "fulfillmentText": "Please specify a shipping method (e.g., 'I’ll go with Express Shipping')."
+        })
+
+    # Lấy danh sách phương thức vận chuyển từ database
+    shipping_methods = db_helper.get_shipping_methods()
+    if not shipping_methods:
+        return JSONResponse(content={
+            "fulfillmentText": "Sorry, no shipping methods are available at the moment. Please contact support."
+        })
+
+    # Tìm phương thức vận chuyển khớp với lựa chọn của khách hàng
+    selected_method = None
+    for method in shipping_methods:
+        if method["method_name"].lower() == shipping_method_name.lower():
+            selected_method = method
+            break
+
+    if not selected_method:
+        return JSONResponse(content={
+            "fulfillmentText": f"Sorry, the shipping method '{shipping_method_name}' is not available. Please choose another method."
+        })
+
+    # Tính tổng số lượng sản phẩm
+    order_list = inprogress_orders[session_id]["order_list"]
+    total_quantity = sum(quantity for _, quantity in order_list)
+
+    # Tính phí vận chuyển và thời gian giao hàng
+    shipping_fee = selected_method["cost_per_product"] * total_quantity
+    ASSUMED_DISTANCE_KM = 100
+    delivery_time_days = selected_method["average_delivery_time_per_km"] * ASSUMED_DISTANCE_KM
+    current_date = datetime.now()
+    estimated_delivery = (current_date + timedelta(days=delivery_time_days)).strftime("%Y-%m-%d")
+
+    # Lưu thông tin phương thức vận chuyển vào session
+    inprogress_orders[session_id]["shipping_info"] = {
+        "method_name": selected_method["method_name"],
+        "shipping_fee": shipping_fee,
+        "estimated_delivery": estimated_delivery
+    }
+
+    # Kiểm tra và lấy địa chỉ giao hàng
+    address = inprogress_orders[session_id].get("shipping_address")
+    if not address:
+        return JSONResponse(content={
+            "fulfillmentText": "No shipping address found. Please provide a delivery address using 'New address' or confirm a default address."
+        })
+
+    # Tổng hợp thông tin đơn hàng
+    items_ordered = []
+    subtotal = 0
+    for product_id, quantity in order_list:
+        product = db_helper.get_list_products_by_id(product_id)
+        if not product:
+            continue
+        product = product[0]
+        product_name = product[0]
+        price = float(product[2])
+        line_total = price * quantity
+        subtotal += line_total
+        items_ordered.append(f"- {product_name} x{quantity} (${price:.2f} each) = ${line_total:.2f}")
+
+    # Discount (nếu có)
+    discount_info = inprogress_orders[session_id].get("discount", None)
+    discount_text = ""
+    discount_amount = 0
+    if discount_info:
+        promo_code = discount_info.get("promo_code", "")
+        discount_amount = discount_info.get("discount_amount", 0)
+        discount_text = f"- Discount ({promo_code}): -${discount_amount:.2f}"
+
+    # Delivery address
+    address_text = (
+        f"Receiver Name: {address['receiver_name']}, "
+        f"Receiver Phone: {address['receiver_phone']}, "
+        f"{address['city']}, {address['province_state']}, "
+        f"{address['country']}, Postal Code: {address['postal_code']}"
+    )
+
+    # Tổng hợp thông tin
+    total_amount = subtotal - discount_amount + shipping_fee
+
+    summary_text = (
+        f"Great! Here is a summary of your order:\n"
+        f"- Items ordered:\n"
+        f"{' '.join(items_ordered)}\n"
+        f"- Subtotal: ${subtotal:.2f}\n"
+        f"{discount_text}\n"
+        f"- Shipping method: {selected_method['method_name']}\n"
+        f"- Shipping fee: ${shipping_fee:.2f}\n"
+        f"- Delivery address: {address_text}\n"
+        f"- Estimated delivery: {estimated_delivery}\n"
+        f"🛒 Total amount: ${total_amount:.2f}\n\n"
+        "Please select a payment method. You can choose from: Credit Card, PayPal, Cash on Delivery, Bank Transfer...\n"
+        "Which payment method would you like to use?"
+    )
+
+    return JSONResponse(content={"fulfillmentText": summary_text})
+
+
+def select_payment_method(parameters: dict, session_id: str):
+    if session_id not in inprogress_orders:
+        return JSONResponse(content={
+            "fulfillmentText": "Session not found. Please start your order again."
+        })
+
+    # Lấy phương thức thanh toán được chọn
+    payment_method = parameters.get("payment-method", "").strip()
+    if not payment_method:
+        return JSONResponse(content={
+            "fulfillmentText": "Please specify a payment method (e.g., 'I’ll go with COD' or 'PayPal, please')."
+        })
+
+    # Lấy danh sách phương thức thanh toán hợp lệ từ database
+    payment_methods = db_helper.get_payment_methods()  # Cần thêm hàm này trong db_helper.py
+    valid_methods = [method["method_name"] for method in payment_methods]
+
+    # Kiểm tra phương thức thanh toán có hợp lệ không
+    if payment_method not in valid_methods:
+        valid_methods_text = "\n".join([f"- {method}" for method in valid_methods])
+        return JSONResponse(content={
+            "fulfillmentText": f"Sorry, '{payment_method}' is not a valid payment method. Please choose from the following:\n{valid_methods_text}"
+        })
+
+    # Lưu phương thức thanh toán vào session
+    inprogress_orders[session_id]["payment_method"] = payment_method
+
+    # Tổng hợp thông tin đơn hàng
+    order_list = inprogress_orders[session_id]["order_list"]
+    shipping_info = inprogress_orders[session_id].get("shipping_info", {})
+    shipping_method = shipping_info.get("method_name", "Not specified")
+    estimated_delivery = shipping_info.get("estimated_delivery", "Not specified")
+    discount_info = inprogress_orders[session_id].get("discount", {})
+    address = inprogress_orders[session_id].get("shipping_address", {})
+
+    items_ordered = []
+    subtotal = 0
+    for product_id, quantity in order_list:
+        product = db_helper.get_list_products_by_id(product_id)
+        if not product:
+            continue
+        product = product[0]
+        product_name = product[0]
+        price = float(product[2])
+        line_total = price * quantity
+        subtotal += line_total
+        items_ordered.append(f"[{product_name}] – Quantity: {quantity} – Price: ${price:.2f}")
+
+    discount_text = ""
+    discount_amount = discount_info.get("discount_amount", 0)
+    if discount_amount > 0:
+        promo_code = discount_info.get("promo_code", "N/A")
+        discount_text = f"- Discount Applied: {promo_code} (-${discount_amount:.2f})"
+
+    shipping_fee = shipping_info.get("shipping_fee", 0)
+    total_amount = subtotal - discount_amount + shipping_fee
+
+    # Hiển thị thông tin chi tiết và hỏi xác nhận
+    address_text = (
+        f"Receiver Name: {address.get('receiver_name', 'Not specified')}, "
+        f"Receiver Phone: {address.get('receiver_phone', 'Not specified')}, "
+        f"{address.get('city', '')}, {address.get('province_state', '')}, "
+        f"{address.get('country', '')}, Postal Code: {address.get('postal_code', '')}"
+    )
+    summary_text = (
+        f"Here’s a summary of your order before we proceed to payment:\n"
+        f"- Items:\n"
+        f"{' '.join(items_ordered)}\n"
+        f"- Total Price: ${subtotal:.2f}\n"
+        f"- Shipping Address: {shipping_method} – {estimated_delivery}\n"
+        f"- Payment Method: {payment_method}\n"
+        f"{discount_text}\n"
+        f"- Final Total: ${total_amount:.2f}\n"
+        "Please review your order carefully. Everything looks correct? Let me know if you need any changes, or if I can proceed with placing your order."
+    )
+
+    return JSONResponse(content={"fulfillmentText": summary_text})
+
+def confirm_order_placement(parameters: dict, session_id: str):
+    if session_id not in inprogress_orders:
+        return JSONResponse(content={
+            "fulfillmentText": "Session not found. Please start your order again."
+        })
+
+    # Kiểm tra xem thông tin cần thiết đã sẵn sàng chưa
+    if not all(key in inprogress_orders[session_id] for key in ["order_list", "shipping_address", "shipping_info", "payment_method", "customer_info"]):
+        return JSONResponse(content={
+            "fulfillmentText": "Order information is incomplete. Please ensure all steps (products, shipping, and payment) are confirmed."
+        })
+
+    # Lấy thông tin từ session
+    order_list = inprogress_orders[session_id]["order_list"]
+    shipping_info = inprogress_orders[session_id]["shipping_info"]
+    payment_method = inprogress_orders[session_id]["payment_method"]
+    address = inprogress_orders[session_id]["shipping_address"]
+    discount_info = inprogress_orders[session_id].get("discount", {})
+    customer_info = inprogress_orders[session_id]["customer_info"]
+
+    # Tính toán tổng giá trị
+    subtotal = 0
+    for product_id, quantity in order_list:
+        product = db_helper.get_list_products_by_id(product_id)
+        if not product:
+            continue
+        product = product[0]
+        price = float(product[2])
+        line_total = price * quantity
+        subtotal += line_total
+
+    discount_amount = discount_info.get("discount_amount", 0)
+    shipping_fee = shipping_info["shipping_fee"]
+    total_amount = subtotal - discount_amount + shipping_fee
+
+    # Lấy customer_id
+    customer = db_helper.get_customer_by_email_or_phone(customer_info["email"], customer_info["phone"])
+    if not customer:
+        return JSONResponse(content={
+            "fulfillmentText": "Customer not found in database. Please try again."
+        })
+    customer_id = customer[0]
+
+    # Lấy payment_method_id
+    payment_methods = db_helper.get_payment_methods()
+    payment_method_id = None
+    for method in payment_methods:
+        if method["method_name"].lower() == payment_method.lower():
+            payment_method_id = method["method_id"]
+            break
+    if not payment_method_id:
+        return JSONResponse(content={
+            "fulfillmentText": f"Payment method '{payment_method}' not found in database."
+        })
+
+    # Lấy shipping_method_id
+    shipping_methods = db_helper.get_shipping_methods()
+    shipping_method_id = None
+    for method in shipping_methods:
+        if method["method_name"].lower() == shipping_info["method_name"].lower():
+            shipping_method_id = method["method_id"]
+            break
+    if not shipping_method_id:
+        return JSONResponse(content={
+            "fulfillmentText": f"Shipping method '{shipping_info['method_name']}' not found in database."
+        })
+
+    # Lấy shipping_address_id
+    shipping_address_id = address["address_id"]
+
+    # Lấy promotion_id (nếu có)
+    promotion_id = None
+    if discount_info:
+        promo_code = discount_info.get("promo_code")
+        promotion = db_helper.get_promotion_by_code(promo_code)
+        if promotion:
+            promotion_id = promotion[0]  # Giả định promotion[0] là promotion_id
+
+    # Lưu order vào database
+    order_details = {
+        "customer_id": customer_id,
+        "payment_method_id": payment_method_id,
+        "shipping_method_id": shipping_method_id,
+        "shipping_address_id": shipping_address_id,
+        "promotion_id": promotion_id,
+        "total_amount": total_amount,
+        "shipping_fee": shipping_fee,
+        "discount": discount_amount,
+        "estimated_delivery_date": shipping_info["estimated_delivery"],
+        "order_list": order_list
+    }
+    order_id = db_helper.place_order(order_details, session_id)
+
+    if not order_id:
+        return JSONResponse(content={
+            "fulfillmentText": "Failed to place your order due to a database error. Please try again."
+        })
+
+    # Trả về order_id để Dialogflow sử dụng trong default response
+    return JSONResponse(content={
+        "fulfillmentText": f"Order placed successfully! Order ID: {order_id}. Is there anything else I can help you with today?",
+        "outputContexts": [
+            {
+                "name": f"{session_id}/contexts/ongoing-order-confirmation",
+                "parameters": {
+                    "order_id": order_id
+                }
+            }
+        ]
+    })
+
+def end_conversation(parameters: dict, session_id: str):
+    if session_id not in inprogress_orders or "payment_method" not in inprogress_orders[session_id]:
+        return JSONResponse(content={
+            "fulfillmentText": "It seems your order was not completed. Please start a new order if needed."
+        })
+
+    payment_method = inprogress_orders[session_id]["payment_method"]
+    is_cod = payment_method.lower() == "cash on delivery"
+
+    if is_cod:
+        end_responses = [
+            "It was a pleasure assisting you. Thank you for shopping with us, we hope you enjoy your purchase! If you have any questions later, feel free to come back and chat with us. Have a wonderful day!"
+        ]
+    else:
+        end_responses = [
+            f"Thank you! Since you’ve chosen {payment_method}, we’ll now redirect you to the secure payment page to complete your transaction. If you have questions in the future, don’t hesitate to ask."
+        ]
+
+    response_text = end_responses
+
+    # Xóa session sau khi hoàn tất
+    if session_id in inprogress_orders:
+        del inprogress_orders[session_id]
+
+    return JSONResponse(content={"fulfillmentText": response_text})
