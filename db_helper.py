@@ -1,196 +1,187 @@
-import psycopg2
-global cnx
+import mysql.connector
+from mysql.connector import Error
 
-cnx = psycopg2.connect(
-    host="localhost",
-    user="postgres",
-    password="admin",
-    database="shopDB"
-)
+# Database connection configuration
+db_config = {
+    'host': 'localhost',
+    'user': 'root',
+    'password': 'A1234567bv@',
+    'database': 'ShopDB'
+}
 
-def get_list_products_by_brand(brand_name):
-    cursor = cnx.cursor()
-    query = """
-        SELECT product_id, product_name 
-        FROM product 
-        JOIN brand ON product.brand_id = brand.brand_id 
-        WHERE brand.brand_name = %s;
+# Global connection
+cnx = None
+
+def init_db_connection():
+    global cnx
+    try:
+        cnx = mysql.connector.connect(**db_config)
+        print("Database connection established successfully!")
+    except Error as err:
+        print(f"Error connecting to database: {err}")
+        cnx = None
+
+# Initialize connection
+init_db_connection()
+
+def get_customer_orders(customer_id=None, customer_name=None):
     """
-    cursor.execute(query, (brand_name,))
-    results = cursor.fetchall()
-    cursor.close()
-    return results
+    Fetch all orders for a customer by ID or Name.
+    Returns a list of dictionaries containing order details.
+    """
+    if not cnx:
+        init_db_connection()
+        if not cnx:
+            return []
 
-def get_list_products_by_price(brand_name, price_range, price):
-    cursor = cnx.cursor()
     try:
-
-        if price_range == "Under":
-            min_price = 0
-            max_price = price
-        elif price_range == "Between":
-            if not isinstance(price, (list, tuple)) or len(price) != 2:
-                return [] 
-            min_price, max_price = price
-        else:
-            return [] 
-
-        if brand_name == "":
+        cursor = cnx.cursor(dictionary=True)
+        if customer_id:
             query = """
-                SELECT product_id, product_name 
-                FROM product 
-                WHERE price BETWEEN %s AND %s;
+
+                SELECT 
+                o.Order_ID,
+                 GROUP_CONCAT(p.Product_Name) AS Product_Names,
+                 o.Total_Amount,
+                pm.Method_Name AS Payment_Method,
+                o.Order_Status
+                FROM `Order` o
+                JOIN Order_Item oi ON o.Order_ID = oi.Order_ID
+                JOIN Product p ON oi.Product_ID = p.Product_ID
+                JOIN Payment_Method pm ON o.Payment_Method_ID = pm.Payment_Method_ID
+                JOIN Customer c ON o.Customer_ID = c.Customer_ID
+                WHERE c.Customer_ID = %s
+                GROUP BY o.Order_ID, o.Total_Amount, pm.Method_Name, o.Order_Status
+                ORDER BY o.Order_Date DESC;
+
             """
-            cursor.execute(query, (min_price, max_price))
-        else:
+            cursor.execute(query, (customer_id,))
+        elif customer_name:
             query = """
-                SELECT product_id, product_name 
-                FROM product 
-                JOIN brand ON product.brand_id = brand.brand_id 
-                WHERE brand.brand_name = %s AND price BETWEEN %s AND %s;
+                
+                SELECT 
+                o.Order_ID,
+                p.Product_Name,
+                pm.Method_Name AS Payment_Method,
+                o.Order_Date,
+                o.Order_Status
+                FROM `Order` o
+                JOIN Order_Item oi ON o.Order_ID = oi.Order_ID
+                JOIN Product p ON oi.Product_ID = p.Product_ID
+                JOIN Payment_Method pm ON o.Payment_Method_ID = pm.Payment_Method_ID
+                JOIN Customer c ON o.Customer_ID = c.Customer_ID
+                WHERE c.Name LIKE %s
+                ORDER BY o.Order_Date DESC
+                
             """
-            cursor.execute(query, (brand_name, min_price, max_price))
+            cursor.execute(query, (f"%{customer_name}%",))
+        else:
+            return []
 
-        results = cursor.fetchall()
-        return results
-    finally:
+        orders = cursor.fetchall()
         cursor.close()
-
-def get_list_products_by_id(product_id):
-    cursor = cnx.cursor()
-    try:
-        query = """
-            SELECT 
-                p.product_name, 
-                p.description AS product_description,
-                p.price, 
-                p.specifications, 
-                b.brand_name, 
-                p.stock_quantity,
-                b.description AS brand_description,
-                b.origin_country 
-            FROM product p 
-            JOIN brand b ON p.brand_id = b.brand_id
-            WHERE p.product_id = %s;
-        """
-        cursor.execute(query, (product_id,))
-        results = cursor.fetchall()
-        return results
-    except Exception as e:
-        cnx.rollback()  
-        print(f"[ERROR] Failed to execute query: {e}")
+        return orders
+    except Error as err:
+        print(f"Error fetching customer orders: {err}")
         return []
-    finally:
-        cursor.close()
-
-def get_product_cheapest():
-    cursor = cnx.cursor()
-    try:
-        query = """
-            SELECT 
-                p.product_name, 
-                p.description AS product_description,
-                p.price, 
-                p.specifications, 
-                b.brand_name, 
-                b.description AS brand_description,
-                b.origin_country 
-            FROM product p 
-            JOIN brand b ON p.brand_id = b.brand_id
-            ORDER BY p.price ASC LIMIT 1;
-        """
-        cursor.execute(query)
-        result = cursor.fetchone()
-        return result
     except Exception as e:
-        print(f"[ERROR] Failed to execute query: {e}")
-        return None
-    finally:
-        cursor.close()
-
-def get_products_by_name(product_name):
-    cursor = cnx.cursor()
-    try:
-        query = """
-            SELECT 
-                p.product_id,
-                p.product_name, 
-                p.description AS product_description,
-                p.price, 
-                p.specifications, 
-                b.brand_name, 
-                b.origin_country, 
-                p.stock_quantity
-            FROM product p 
-            JOIN brand b ON p.brand_id = b.brand_id
-            WHERE p.product_name LIKE %s;
-        """
-        cursor.execute(query, (f"%{product_name}%",))
-        return cursor.fetchall()
-    except Exception as e:
-        print(f"[ERROR] Failed to query products by name: {e}")
-        return None
-    finally:
-        cursor.close()
-
-def get_valid_promotions(min_order: float):
-    cursor = cnx.cursor()
-    try:
-        query = """
-            SELECT 
-                coupon_code, 
-                description, 
-                minimum_order
-            FROM promotion
-            WHERE minimum_order <= %s AND status = 'active'
-        """
-        cursor.execute(query, (min_order,))
-        results = cursor.fetchall()
-        return [
-            {
-                "coupon_code": row[0],
-                "description": row[1],
-                "minimum_order": row[2]
-            }
-            for row in results
-        ]
-    except Exception as e:
-        print(f"[ERROR] Failed to get promotions: {e}")
+        print(f"An error occurred: {e}")
         return []
-    finally:
-        cursor.close()
 
-def get_promotion_by_code(coupon_code: str):
-    cursor = cnx.cursor()
+
+def delete_order(order_id):
+    """
+    Delete a specific order by Order_ID if its status is 'processing'.
+    Returns True if successful, False if the order doesn't exist or status is not 'processing'.
+    """
+    if not cnx:
+        init_db_connection()
+        if not cnx:
+            return False
+
     try:
-        query = """
-            SELECT coupon_code, discount_value
-            FROM promotion
-            WHERE coupon_code = %s
+        cursor = cnx.cursor()
+        # Check if the order exists and has status 'processing'
+        check_query = """
+            SELECT COUNT(*) FROM `Order`
+            WHERE Order_ID = %s AND Order_Status = 'processing'
         """
-        cursor.execute(query, (coupon_code,))
-        result = cursor.fetchone()
-        return result
-    except Exception as e:
-        print(f"[ERROR] get_promotion_by_code failed: {e}")
-        return None
-    finally:
-        cursor.close()
+        cursor.execute(check_query, (order_id,))
+        count = cursor.fetchone()[0]
 
-# def get_default_address_by_session(session_id: str):
-#     cursor = cnx.cursor()
-#     try:
-#         query = """
-#             SELECT address_line
-#             FROM user_session us
-#             JOIN user u ON us.user_id = u.user_id
-#             WHERE us.session_id = %s
-#         """
-#         cursor.execute(query, (session_id,))
-#         result = cursor.fetchone()
-#         return result[0] if result else None
-#     except Exception as e:
-#         print(f"[ERROR] get_default_address_by_session failed: {e}")
-#         return None
-#     finally:
-#         cursor.close()
+        if count == 0:
+            cursor.close()
+            return False
+
+        # Delete from Order_Item first (due to foreign key constraint)
+        cursor.execute("DELETE FROM Order_Item WHERE Order_ID = %s", (order_id,))
+        # Delete from Order
+        cursor.execute("DELETE FROM `Order` WHERE Order_ID = %s", (order_id,))
+
+        cnx.commit()
+        cursor.close()
+        return True
+    except Error as err:
+        print(f"Error deleting order {order_id}: {err}")
+        cnx.rollback()
+        return False
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        cnx.rollback()
+        return False
+    
+def update_shipping_address(order_id, customer_id, receiver_name, receiver_phone, country, city, province_state, postal_code):
+    """
+    Update shipping address for a specific order by Order_ID if its status is 'processing'.
+    Inserts a new address into Shipping_Address and updates Order with the new Shipping_Address_ID.
+    Returns True if successful, False if the order doesn't exist, status is not 'processing', or error occurs.
+    """
+    if not cnx:
+        init_db_connection()
+        if not cnx:
+            return False
+
+    try:
+        cursor = cnx.cursor()
+        # Check if the order exists, has status 'processing', and belongs to the customer
+        check_query = """
+            SELECT COUNT(*) FROM `Order`
+            WHERE Order_ID = %s AND Customer_ID = %s AND Order_Status = 'processing'
+        """
+        cursor.execute(check_query, (order_id, customer_id))
+        count = cursor.fetchone()[0]
+
+        if count == 0:
+            cursor.close()
+            return False
+
+        # Insert new shipping address
+        insert_address_query = """
+            INSERT INTO Shipping_Address (Customer_ID, Receiver_Name, Receiver_Phone, Country, City, Province_State, Postal_Code)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """
+        cursor.execute(insert_address_query, (customer_id, receiver_name, receiver_phone, country, city, province_state, postal_code))
+        cnx.commit()
+
+        # Get the ID of the newly inserted address
+        new_address_id = cursor.lastrowid
+
+        # Update Order with the new Shipping_Address_ID
+        update_order_query = """
+            UPDATE `Order`
+            SET Shipping_Address_ID = %s
+            WHERE Order_ID = %s
+        """
+        cursor.execute(update_order_query, (new_address_id, order_id))
+        cnx.commit()
+
+        cursor.close()
+        return True
+    except Error as err:
+        print(f"Error updating shipping address for order {order_id}: {err}")
+        cnx.rollback()
+        return False
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        cnx.rollback()
+        return False
