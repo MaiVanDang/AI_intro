@@ -33,6 +33,7 @@ async def handle_request(request: Request):
 
     if intent == "confirm.product.order : context: ongoing-order":
         return confirm_order(parameters, session_id)
+    
     elif intent == "Update.order : context: edit-order":
         return update_order(parameters, session_id)
     
@@ -111,7 +112,8 @@ def search_by_price(parameters: dict):
         return JSONResponse(content={"fulfillmentText": f"No product found for the given criteria."})
 
 def search_by_id(parameters: dict):
-    product_id = parameters.get("number")
+    product_id = parameters.get("number-integer")
+    print(f"Received product_id: {product_id}")
     if isinstance(product_id, list) and len(product_id) > 0:
         product_id = product_id[0]
     if isinstance(product_id, float):
@@ -127,6 +129,7 @@ def search_by_id(parameters: dict):
                 price,
                 specification,
                 brand_name,
+                stock_quantity,
                 brand_description,
                 origin_country
             ) = product

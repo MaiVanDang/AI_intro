@@ -6,8 +6,8 @@ global cnx
 cnx = psycopg2.connect(
     host="localhost",
     user="postgres",
-    password="huyentrang",
-    database="ShopDB"
+    password="admin",
+    database="shopDB"
 )
 
 def get_list_products_by_brand(brand_name):
@@ -124,9 +124,9 @@ def get_products_by_name(product_name):
                 p.stock_quantity
             FROM product p 
             JOIN brand b ON p.brand_id = b.brand_id
-            WHERE p.product_name LIKE %s;
+            WHERE p.product_name = %s;
         """
-        cursor.execute(query, (f"%{product_name}%",))
+        cursor.execute(query, (product_name,))
         return cursor.fetchall()
     except Exception as e:
         print(f"[ERROR] Failed to query products by name: {e}")
