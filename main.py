@@ -217,11 +217,28 @@ def confirm_order(parameters: dict, session_id: str):
             order_list.append((product_id, quantity))
 
     if session_id and order_list:
-        inprogress_orders[session_id] = {
-            "order_list": order_list,
-            "customer_info": None,
-            "shipping_address": None
-        }
+        if session_id in inprogress_orders:
+            # Cập nhật order hiện tại
+            current_order = inprogress_orders[session_id]
+            if "order_list" in current_order:
+                # Merge với order cũ
+                existing_orders = dict(current_order["order_list"])
+                for product_id, quantity in order_list:
+                    if product_id in existing_orders:
+                        existing_orders[product_id] += quantity
+                    else:
+                        existing_orders[product_id] = quantity
+                current_order["order_list"] = list(existing_orders.items())
+            else:
+                current_order["order_list"] = order_list
+            inprogress_orders[session_id] = current_order
+        else:
+            # Tạo order mới
+            inprogress_orders[session_id] = {
+                "order_list": order_list,
+                "customer_info": None,
+                "shipping_address": None
+            }
 
     if not confirm_lines:
         messages = []
@@ -372,6 +389,12 @@ def update_order(parameters: dict, session_id: str) -> JSONResponse:
     return JSONResponse(content={"fulfillmentText": response_text})
 
 def proceed_to_checkout(parameters: dict, session_id: str):
+
+    # Kiểm tra session tồn tại như code mẫu
+    if session_id not in inprogress_orders:
+        fulfillment_text = "You have not added any items to your cart yet."
+        return JSONResponse(content={"fulfillmentText": fulfillment_text})
+    
     session_data = inprogress_orders.get(session_id, {})
     order_list = session_data.get("order_list", [])
 
@@ -399,26 +422,25 @@ def proceed_to_checkout(parameters: dict, session_id: str):
         total_amount += line_total
 
         order_summary_lines.append(
-            f"- {product_name} x{quantity} (${price:.2f} each) = ${line_total:.2f} | Brand: {brand_name} from {origin_country}"
+            f"- {product_name} x{quantity} (${price:.2f} each) = ${line_total:.2f}\n  Brand: {brand_name} from {origin_country}"
         )
 
     promotions = db_helper.get_valid_promotions(min_order=total_amount)
 
     if promotions:
-        promo_lines = [
-            f"- Code: {promo['coupon_code']} - {promo['description']} (min order: ${promo['minimum_order']})"
-            for promo in promotions
-        ]
+        promo_lines = []
+        promo_lines.append("═══════════════════════════════════")
+        promo_lines.append("           ORDER SUMMARY")
+        promo_lines.append("═══════════════════════════════════")
+        promo_lines.append("")
+        for promo in promotions:
+            promo_lines.append(f"- Code: {promo['coupon_code']} - {promo['description']}")
+            promo_lines.append(f"  (min order: ${promo['minimum_order']})")
         promotion_text = "\n\n🎁 Available promotions:\n" + "\n".join(promo_lines)
     else:
         promotion_text = "\n\n(There are currently no promotions available for your order.)"
 
-    response_text = (
-        f"🧾 Your current order total is: ${total_amount:.2f}\n"
-        + "\n".join(order_summary_lines)
-        + promotion_text
-        + "\n\nPlease reply with the promotion code you want to apply or say 'No promotion'."
-    )
+    response_text = f"🧾 Your current order total is: ${total_amount:.2f}\n\n" + "\n".join(order_summary_lines) + promotion_text + "\n\nPlease reply with the promotion code you want to apply or say 'No promotion'."
 
     return JSONResponse(content={"fulfillmentText": response_text})
 

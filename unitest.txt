@@ -1,1 +1,10 @@
-hi --> new order --> Nike --> I want to see duffel bags below $60.  --> Pick the cheapest one, please. --> I want to see product ID 4 --> I want to order Product 1 quantity 2
+Kịch bản 1:
+hi 
+--> new order 
+--> Nike 
+--> I want to see duffel bags below $60.  
+--> Pick the cheapest one, please. 
+--> I want to see product ID 4 
+--> I want to order Product 1 quantity 2
+--> Add Name: Product 2 - Quantity: 3
+--> That's enough, let's move on.
