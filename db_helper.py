@@ -1,11 +1,13 @@
 import psycopg2
+from datetime import datetime, timedelta
+
 global cnx
 
 cnx = psycopg2.connect(
     host="localhost",
     user="postgres",
-    password="admin",
-    database="shopDB"
+    password="huyentrang",
+    database="ShopDB"
 )
 
 def get_list_products_by_brand(brand_name):
@@ -24,7 +26,6 @@ def get_list_products_by_brand(brand_name):
 def get_list_products_by_price(brand_name, price_range, price):
     cursor = cnx.cursor()
     try:
-
         if price_range == "Under":
             min_price = 0
             max_price = price
@@ -160,37 +161,205 @@ def get_valid_promotions(min_order: float):
     finally:
         cursor.close()
 
+# Cập nhật hàm get_promotion_by_code để trả về promotion_id
 def get_promotion_by_code(coupon_code: str):
     cursor = cnx.cursor()
     try:
         query = """
-            SELECT coupon_code, discount_value
+            SELECT Promotion_ID, coupon_code, discount_value
             FROM promotion
             WHERE coupon_code = %s
         """
         cursor.execute(query, (coupon_code,))
         result = cursor.fetchone()
-        return result
+        return result  # (promotion_id, coupon_code, discount_value)
     except Exception as e:
         print(f"[ERROR] get_promotion_by_code failed: {e}")
         return None
     finally:
         cursor.close()
 
-# def get_default_address_by_session(session_id: str):
-#     cursor = cnx.cursor()
-#     try:
-#         query = """
-#             SELECT address_line
-#             FROM user_session us
-#             JOIN user u ON us.user_id = u.user_id
-#             WHERE us.session_id = %s
-#         """
-#         cursor.execute(query, (session_id,))
-#         result = cursor.fetchone()
-#         return result[0] if result else None
-#     except Exception as e:
-#         print(f"[ERROR] get_default_address_by_session failed: {e}")
-#         return None
-#     finally:
-#         cursor.close()
+def get_customer_by_email_or_phone(email: str, phone: str):
+    cursor = cnx.cursor()
+    try:
+        query = """
+            SELECT customer_id FROM customer
+            WHERE email = %s OR phone = %s
+        """
+        cursor.execute(query, (email, phone))
+        result = cursor.fetchone()
+        return result
+    except Exception as e:
+        print(f"[ERROR] Failed to get customer by email or phone: {e}")
+        return None
+    finally:
+        cursor.close()
+
+def get_customer_info(customer_id: int):
+    cursor = cnx.cursor()
+    try:
+        query = """
+            SELECT name, email, phone
+            FROM customer
+            WHERE customer_id = %s
+        """
+        cursor.execute(query, (customer_id,))
+        result = cursor.fetchone()
+        return result
+    except Exception as e:
+        print(f"[ERROR] Failed to get customer info: {e}")
+        return None
+    finally:
+        cursor.close()
+
+def get_default_address_by_customer(customer_id: int):
+    cursor = cnx.cursor()
+    try:
+        query = """
+            SELECT address_id, receiver_name, receiver_phone, country, city, province_state, postal_code
+            FROM shipping_address
+            WHERE customer_id = %s AND is_default = TRUE
+        """
+        cursor.execute(query, (customer_id,))
+        result = cursor.fetchone()
+        return result
+    except Exception as e:
+        print(f"[ERROR] Failed to get default address: {e}")
+        return None
+    finally:
+        cursor.close()
+
+def get_shipping_methods():
+    cursor = cnx.cursor()
+    try:
+        query = """
+            SELECT shipping_method_id, method_name, cost_per_product, average_delivery_time_per_km
+            FROM shipping_method
+        """
+        cursor.execute(query)
+        results = cursor.fetchall()
+        return [
+            {
+                "method_id": row[0],
+                "method_name": row[1],
+                "cost_per_product": float(row[2]),
+                "average_delivery_time_per_km": float(row[3])
+            }
+            for row in results
+        ]
+    except Exception as e:
+        print(f"[ERROR] Failed to get shipping methods: {e}")
+        return []
+    finally:
+        cursor.close()
+
+# Thêm hàm lưu địa chỉ mới
+def save_new_shipping_address(customer_id, receiver_name, receiver_phone, country, city, province_state, postal_code, is_default):
+    cursor = cnx.cursor()
+    try:
+        query = """
+            INSERT INTO shipping_address (customer_id, receiver_name, receiver_phone, country, city, province_state, postal_code, is_default)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING address_id
+        """
+        cursor.execute(query, (customer_id, receiver_name, receiver_phone, country, city, province_state, postal_code, is_default))
+        new_address_id = cursor.fetchone()[0]
+        cnx.commit()
+        return new_address_id
+    except Exception as e:
+        cnx.rollback()
+        print(f"[ERROR] Failed to save new shipping address: {e}")
+        return None
+    finally:
+        cursor.close()
+
+
+
+# Cập nhật hàm get_payment_methods để trả về thêm payment_method_id
+def get_payment_methods():
+    cursor = cnx.cursor()
+    try:
+        query = """
+            SELECT Payment_Method_ID, Method_Name, Description
+            FROM Payment_Method
+        """
+        cursor.execute(query)
+        results = cursor.fetchall()
+        return [
+            {
+                "method_id": row[0],
+                "method_name": row[1],
+                "description": row[2]
+            }
+            for row in results
+        ]
+    except Exception as e:
+        print(f"[ERROR] Failed to get payment methods: {e}")
+        return []
+    finally:
+        cursor.close()
+
+def place_order(order_details: dict, session_id: str):
+    cursor = cnx.cursor()
+    try:
+        # Lưu vào bảng Order
+        query = """
+            INSERT INTO "Order" (
+                Customer_ID, Payment_Method_ID, Shipping_Method_ID, Shipping_Address_ID,
+                Promotion_ID, Total_Amount, Shipping_Fee, Discount,
+                Estimated_Delivery_Date, Payment_Status, Order_Status, Note
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING Order_ID
+        """
+        cursor.execute(query, (
+            order_details["customer_id"],
+            order_details["payment_method_id"],
+            order_details["shipping_method_id"],
+            order_details["shipping_address_id"],
+            order_details["promotion_id"],
+            order_details["total_amount"],
+            order_details["shipping_fee"],
+            order_details["discount"],
+            order_details["estimated_delivery_date"],
+            "pending",  # Payment_Status
+            "pending",  # Order_Status
+            f"Order placed via chatbot (session: {session_id})"  # Note
+        ))
+        order_id = cursor.fetchone()[0]
+
+        # Lưu chi tiết order vào bảng Order_Item
+        for product_id, quantity in order_details["order_list"]:
+            query = """
+                INSERT INTO Order_Item (Order_ID, Product_ID, Quantity)
+                VALUES (%s, %s, %s)
+            """
+            cursor.execute(query, (order_id, product_id, quantity))
+
+        cnx.commit()
+        return order_id
+    except Exception as e:
+        cnx.rollback()
+        print(f"[ERROR] Failed to place order: {e}")
+        return None
+    finally:
+        cursor.close()
+
+def get_available_promotions(minimum_order_value: float):
+    cursor = cnx.cursor()
+    try:
+        query = """
+            SELECT Promotion_ID, Coupon_Code, Discount_Value, Minimum_Order
+            FROM Promotion
+            WHERE Status = 'active'
+            AND Minimum_Order <= %s
+            AND (End_Date IS NULL OR End_Date >= CURRENT_DATE)
+        """
+        cursor.execute(query, (minimum_order_value,))
+        results = cursor.fetchall()
+        return results  # (promotion_id, coupon_code, discount_value, minimum_order)
+    except Exception as e:
+        print(f"[ERROR] Failed to get available promotions: {e}")
+        return []
+    finally:
+        cursor.close()
