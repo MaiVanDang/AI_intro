@@ -261,22 +261,22 @@ def confirm_order(parameters: dict, session_id: str):
     return JSONResponse(content={"fulfillmentText": confirm_text})
 
 def update_order(parameters: dict, session_id: str) -> JSONResponse:
-    product_ids = parameters.get("number", [])
+    product_names = parameters.get("product-name", [])
     quantities = parameters.get("number-integer", [])
-    state = parameters.get("state")
     
-    logger.info(f"Updating order: product_ids={product_ids}, quantities={quantities}, session={session_id}")
+    logger.info(f"Updating order: product_name={product_names}, quantities={quantities}, session={session_id}")
 
-    if not isinstance(product_ids, list):
-        product_ids = [product_ids]
+    # Chuẩn hoá dữ liệu đầu vào
+    if not isinstance(product_names, list):
+        product_names = [product_names]
     if not isinstance(quantities, list):
         quantities = [quantities]
 
-    if (not product_ids) or not quantities:
-        return JSONResponse(content={"fulfillmentText": "Please provide ID and quantity for update."})
+    if not product_names or not quantities:
+        return JSONResponse(content={"fulfillmentText": "Please provide product name and quantity for update."})
     
-    if product_ids and len(product_ids) != len(quantities):
-        return JSONResponse(content={"fulfillmentText": "Product ID and quantity do not match."})
+    if len(product_names) != len(quantities):
+        return JSONResponse(content={"fulfillmentText": "Product name and quantity do not match."})
 
     if session_id not in inprogress_orders:
         return JSONResponse(content={"fulfillmentText": "No pending orders found. Please create a new order first."})
@@ -286,104 +286,95 @@ def update_order(parameters: dict, session_id: str) -> JSONResponse:
     not_found_lines = []
     insufficient_stock_lines = []
     update_lines = []
-    
-    if product_ids and product_ids[0]:
-        for product_id, quantity in zip(product_ids, quantities):
-            try:
-                product_id = int(product_id)
-                products = db_helper.get_list_products_by_id(product_id)
-                
-                if not products:
-                    not_found_lines.append(f"- No products found with ID '{product_id}'.")
-                    continue
 
-                for product in products:
-                    product_name = product[0]
-                    price = product[2]
-                    stock_quantity = product[5]
-                    brand_name = product[4]
-                    origin_country = product[7]
+    for name, qty in zip(product_names, quantities):
+        try:
+            qty = int(qty)
+            if qty <= 0:  # Validate số lượng
+                not_found_lines.append(f"- Invalid quantity {qty} for '{name}'.")
+                continue
                 
-                if isinstance(stock_quantity, str):
-                    stock_quantity = int(stock_quantity)
-                    
-                if isinstance(quantity, float):
-                    quantity = int(quantity)
-                    
-                if stock_quantity < quantity:
-                    insufficient_stock_lines.append(
-                        f"- {product_name} (ID: {product_id}) only has {stock_quantity} in store, but you requested {quantity}."
-                    )
-                    continue
+            products = db_helper.get_products_by_name(name)
+            if not products:
+                not_found_lines.append(f"- No products found with name '{name}'.")
+                continue
 
-                product_found = False
-                for i, (current_id, current_quantity) in enumerate(current_order):
-                    if current_id == product_id:
-                        current_order[i] = (product_id, quantity)
-                        update_lines.append(
-                            f"- Updated: {product_name} (ID: {product_id}) - Quantity: {quantity}"
-                        )
-                        product_found = True
-                        updated = True
-                        break
-                
-                if not product_found:
-                    current_order.append((product_id, quantity))
-                    update_lines.append(
-                        f"- New added: {product_name} (ID: {product_id}) - Quantity: {quantity}"
-                    )
+            product = products[0]
+            product_id = product[0] 
+            product_name = product[1]
+            product_description = product[2]
+            price = product[3]
+            product_specification = product[4]
+            brand_name = product[5]
+            origin_country = product[6]
+            stock = int(product[7])
+
+            if stock < qty:
+                insufficient_stock_lines.append(
+                    f"- {product_name} (ID: {product_id}) only has {stock} in stock, but you requested {qty}."
+                )
+                continue
+
+            #So sánh đúng kiểu dữ liệu
+            for i, (curr_id, _) in enumerate(current_order):
+                if curr_id == product_id:
+                    current_order[i] = (product_id, qty)
+                    update_lines.append(f"- Updated: {product_name} (ID: {product_id}) - Quantity: {qty}")
                     updated = True
-            except ValueError:
-                not_found_lines.append(f"- ID product '{product_id}' invalid.")
+                    break
+            else:
+                current_order.append((product_id, qty))
+                update_lines.append(f"- New added: {product_name} (ID: {product_id}) - Quantity: {qty}")
+                updated = True
 
+        except ValueError:  #Handle int conversion error
+            not_found_lines.append(f"- Invalid quantity '{qty}' for '{name}'.")
+        except Exception as e:
+            logger.error(f"Error updating product '{name}': {e}")
+            not_found_lines.append(f"- Error processing '{name}'.")
+
+    # Cập nhật nếu có thay đổi
     if updated:
         inprogress_orders[session_id]["order_list"] = current_order
         logger.info(f"Updated order in session {session_id}: {current_order}")
 
+    #Hiển thị đơn hàng đúng cách
     current_products = []
-    for product_id, quantity in current_order:
-        products = db_helper.get_list_products_by_id(product_id)
+    for product_id, quantity in current_order:  #Đặt tên biến đúng
+        products = db_helper.get_list_products_by_id(product_id)  #Tìm theo ID
         if products:
-            product = products[0]
-            name = product[0]  # product_name
-            price = product[2]  # price
-            brand_name = product[4]  # brand_name
-            origin_country = product[7]  # origin_country
-            
+            product = products[0] if isinstance(products, list) else products
             current_products.append({
-                "id": product_id,
-                "name": name,
+                "id": product[0],
+                "name": product[1],  # Lấy tên từ DB
                 "quantity": quantity,
-                "price": price,
-                "brand": brand_name,
-                "origin": origin_country
+                "price": product[3],
+                "brand": product[5],
+                "origin": product[6]
             })
 
+    # Tạo thông điệp phản hồi (giữ nguyên phần này)
     if not updated:
         messages = []
         if not_found_lines:
             messages.append("No product found:\n" + "\n".join(not_found_lines))
         if insufficient_stock_lines:
             messages.append("Not enough stock:\n" + "\n".join(insufficient_stock_lines))
-        
-        if messages:
-            return JSONResponse(content={"fulfillmentText": "\n\n".join(messages)})
-        else:
-            return JSONResponse(content={"fulfillmentText": "No changes can be made to the order."})
+        return JSONResponse(content={"fulfillmentText": "\n\n".join(messages) or "No changes can be made to the order."})
 
-    response_text = "Order updated:\n"
-    response_text += "\n".join(update_lines)
-    
+    response_text = "Order updated:\n" + "\n".join(update_lines)
     if insufficient_stock_lines:
         response_text += "\n\nInventory Alerts:\n" + "\n".join(insufficient_stock_lines)
     if not_found_lines:
         response_text += "\n\nNot found:\n" + "\n".join(not_found_lines)
-    
+
     response_text += "\n\nCurrent orders:\n"
-    for product in current_products:
-        response_text += f"- ID: {product['id']}  Name: {product['name']}  Quantity: {product['quantity']}  "
-        response_text += f"Price: ${product['price']}  brand: {product['brand']} from {product['origin']}\n"
-    
+    for p in current_products:
+        response_text += (
+            f"- ID: {p['id']}  Name: {p['name']}  Quantity: {p['quantity']}  "
+            f"Price: ${p['price']}  Brand: {p['brand']} from {p['origin']}\n"
+        )
+
     response_text += "\n(You can continue to update your order or confirm to complete.)"
 
     return JSONResponse(content={"fulfillmentText": response_text})
