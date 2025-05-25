@@ -10,4 +10,11 @@ hi
 --> That's enough, let's move on.
 --> Sorry! I want to update Product 1 Quantity 4
 --> That's enough, let's move on.
---> 
+--> I want to apply code: SUMMER15
+--> Email: john.doe@example.com, phone: 0987654321.
+--> Yes, that’s correct
+--> Yes! Use default address
+--> Please use Express Shipping
+--> I'll pay with a credit card.
+--> I confirm the order. You can place it now
+--> No, thanks.
