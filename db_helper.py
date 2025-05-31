@@ -1,14 +1,32 @@
+from binascii import Error
 import psycopg2
+from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta
 
-global cnx
+# global cnx
 
-cnx = psycopg2.connect(
-    host="localhost",
-    user="postgres",
-    password="admin",
-    database="shopDB"
-)
+# cnx = psycopg2.connect(
+#     host="localhost",
+#     user="postgres",
+#     password="admin",
+#     database="shopDB"
+# )
+
+def init_db_connection():
+    global cnx
+    try:
+        cnx = psycopg2.connect(
+            host="localhost",
+            user="postgres",
+            password="admin",
+            database="shopDB"
+        )
+        print("Database connection initialized successfully.")
+    except Exception as e:
+        print(f"Failed to initialize database connection: {e}")
+        cnx = None
+
+init_db_connection()
 
 def get_list_products_by_brand(brand_name):
     cursor = cnx.cursor()
@@ -273,8 +291,6 @@ def save_new_shipping_address(customer_id, receiver_name, receiver_phone, countr
     finally:
         cursor.close()
 
-
-
 # Cập nhật hàm get_payment_methods để trả về thêm payment_method_id
 def get_payment_methods():
     cursor = cnx.cursor()
@@ -363,3 +379,187 @@ def get_available_promotions(minimum_order_value: float):
         return []
     finally:
         cursor.close()
+
+def get_customer_orders(customer_id=None, customer_name=None):
+    if not cnx:
+        init_db_connection()
+        if not cnx:
+            return []
+
+    try:
+        cursor = cnx.cursor(cursor_factory=RealDictCursor)
+
+        if customer_id:
+            query = """
+                SELECT 
+                    o.Order_ID,
+                    STRING_AGG(p.Product_Name, ', ') AS Product_Names,
+                    o.Total_Amount,
+                    pm.Method_Name AS Payment_Method,
+                    o.Order_Status,
+                    o.Order_Date
+                FROM "Order" o
+                JOIN Order_Item oi ON o.Order_ID = oi.Order_ID
+                JOIN Product p ON oi.Product_ID = p.Product_ID
+                JOIN Payment_Method pm ON o.Payment_Method_ID = pm.Payment_Method_ID
+                JOIN Customer c ON o.Customer_ID = c.Customer_ID
+                WHERE c.Customer_ID = %s
+                GROUP BY o.Order_ID, o.Total_Amount, pm.Method_Name, o.Order_Status, o.Order_Date
+                ORDER BY o.Order_Date DESC;
+            """
+            cursor.execute(query, (customer_id,))
+        elif customer_name:
+            query = """
+                SELECT 
+                    o.order_id,
+                    STRING_AGG(p.product_name, ', ') AS Product_Names,
+                    o.total_amount,
+                    pm.method_name AS Payment_Method,
+                    o.order_status,
+                    o.order_date
+                FROM "Order" o
+                JOIN order_item oi ON o.order_id = oi.order_id
+                JOIN product p ON oi.product_id = p.product_id
+                JOIN payment_method pm ON o.payment_method_id = pm.payment_method_id
+                JOIN customer c ON o.customer_id = c.customer_id
+                WHERE c.name ILIKE 'Emma Wang'
+                GROUP BY o.order_id, o.total_amount, pm.method_name, o.order_status, o.order_date
+                ORDER BY o.order_date DESC;
+            """
+            cursor.execute(query, (f"%{customer_name}%",))
+        else:
+            return []
+
+        orders = cursor.fetchall()
+        cursor.close()
+        return orders
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return []
+    
+def delete_order(order_id):
+    """
+    Delete a specific order by Order_ID if its status is 'processing'.
+    Returns True if successful, False if the order doesn't exist or status is not 'processing'.
+    """
+    if not cnx:
+        init_db_connection()
+        if not cnx:
+            return False
+
+    try:
+        cursor = cnx.cursor()
+        # Check if the order exists and has status 'processing'
+        check_query = """
+                SELECT COUNT(*) FROM "Order"
+                WHERE order_id = %s AND order_status = 'Processing'
+        """
+        cursor.execute(check_query, (order_id,))
+        count = cursor.fetchone()[0]
+
+        if count == 0:
+            cursor.close()
+            return False
+
+        # Delete from Order_Item first (due to foreign key constraint)
+        cursor.execute('DELETE FROM "order_item" WHERE order_id = %s', (order_id,))
+        # Delete from Order
+        cursor.execute('DELETE FROM "Order" WHERE order_id = %s', (order_id,))
+
+        cnx.commit()
+        cursor.close()
+        return True
+    except Error as err:
+        print(f"Error deleting order {order_id}: {err}")
+        if cnx:
+            cnx.rollback()
+        return False
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        if cnx:
+            cnx.rollback()
+        return False 
+    
+def update_shipping_address(order_id, customer_id, receiver_name, receiver_phone, country, city, province_state, postal_code):
+    """
+    Update shipping address for a specific order by Order_ID if its status is 'processing'.
+    Inserts a new address into Shipping_Address and updates Order with the new Shipping_Address_ID.
+    Returns True if successful, False if the order doesn't exist, status is not 'processing', or error occurs.
+    """
+    if not cnx:
+        init_db_connection()
+        if not cnx:
+            return False
+
+    cursor = None  
+    try:
+        # Fix receiver_name if it's still a dict (fallback protection)
+        if isinstance(receiver_name, dict):
+            if 'name' in receiver_name:
+                receiver_name = receiver_name['name']
+            else:
+                receiver_name = str(receiver_name)
+        elif isinstance(receiver_name, list) and len(receiver_name) > 0:
+            first_item = receiver_name[0]
+            if isinstance(first_item, dict) and 'name' in first_item:
+                receiver_name = first_item['name']
+            else:
+                receiver_name = str(first_item)
+        
+        # Debug: Print values and types before executing query
+        print(f"Values being inserted:")
+        print(f"order_id: {type(order_id)} = {order_id}")
+        print(f"customer_id: {type(customer_id)} = {customer_id}")
+        print(f"receiver_name: {type(receiver_name)} = {receiver_name}")
+        print(f"receiver_phone: {type(receiver_phone)} = {receiver_phone}")
+        print(f"country: {type(country)} = {country}")
+        print(f"city: {type(city)} = {city}")
+        print(f"province_state: {type(province_state)} = {province_state}")
+        print(f"postal_code: {type(postal_code)} = {postal_code}")
+        
+        cursor = cnx.cursor()
+        
+        check_query = """
+            SELECT COUNT(*) FROM "Order"
+            WHERE order_id = %s AND customer_id = %s AND order_status = 'Processing'
+        """
+        cursor.execute(check_query, (order_id, customer_id))
+        count = cursor.fetchone()[0]
+
+        if count == 0:
+            return False
+
+        insert_address_query = """
+            INSERT INTO "shipping_address" (customer_id, receiver_name, receiver_phone, country, city, province_state, postal_code)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING address_id
+        """
+        cursor.execute(insert_address_query, (customer_id, receiver_name, receiver_phone, country, city, province_state, postal_code))
+        
+        new_address_id = cursor.fetchone()[0]
+
+        update_order_query = """
+            UPDATE "Order"
+            SET shipping_address_id = %s
+            WHERE order_id = %s
+        """
+        cursor.execute(update_order_query, (new_address_id, order_id))
+        
+        cnx.commit()
+        
+        return True
+        
+    except Error as err:
+        print(f"Error updating shipping address for order {order_id}: {err}")
+        if cnx:
+            cnx.rollback()
+        return False
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        if cnx:
+            cnx.rollback()
+        return False
+    finally:
+        if cursor:
+            cursor.close()

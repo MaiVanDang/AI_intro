@@ -78,6 +78,15 @@ async def handle_request(request: Request):
 
     if intent == "end-conversation - context: ongoing-order-complete":
         return end_conversation(parameters, session_id)
+    
+    if intent == "showlist.confirm - context: ongoing-tracking":
+        return show_customer_orders(parameters, session_id)
+    
+    if intent == "delete - context: ongoing-tracking":
+        return delete_order_handler(parameters, session_id)
+    
+    if intent == "update.address.confirm - context: ongoing-tracking":
+        return update_shipping_address_handler(parameters, session_id)
 
 def search_by_brand(parameters: dict):
     brand_name_item = parameters["brand-name-item"]
@@ -955,7 +964,6 @@ def confirm_shipping_method(parameters: dict, session_id: str):
 
     return JSONResponse(content={"fulfillmentText": summary_text})
 
-
 def select_payment_method(parameters: dict, session_id: str):
     if session_id not in inprogress_orders:
         return JSONResponse(content={
@@ -1171,7 +1179,6 @@ def end_conversation(parameters: dict, session_id: str):
 
     return JSONResponse(content={"fulfillmentText": response_text})
 
-
 def cancel_order(parameters: dict, session_id: str):
     if session_id not in inprogress_orders:
         return JSONResponse(content={
@@ -1282,3 +1289,128 @@ def remove_items(parameters: dict, session_id: str):
     )
 
     return JSONResponse(content={"fulfillmentText": response_text})
+
+def show_customer_orders(parameters: dict, session_id: str):
+    """
+    Handle 'show customer orders' intent to display all orders for a customer.
+    """
+    customer_id = parameters.get('number')
+    customer_name = parameters.get('person')
+
+    # Convert customer_id to int if provided
+    if customer_id:
+        try:
+            customer_id = int(customer_id)
+        except ValueError:
+            customer_id = None
+
+    # Fetch orders using db_helper
+    orders = db_helper.get_customer_orders(customer_id=customer_id, customer_name=customer_name)
+
+    if not orders:
+        fulfillment_text = "No orders found for this customer. Please check the ID or name and try again."
+    else:
+        order_details = []
+        for order in orders:
+            # Xử lý trường hợp Product_Names có thể null
+            products = order.get('product_names') or order.get('Product_Names', 'No products')
+            
+            # Format số tiền an toàn hơn
+            total_amount = order.get('total_amount') or order.get('Total_Amount', 0)
+            try:
+                formatted_amount = f"${float(total_amount):,.2f}"
+            except (ValueError, TypeError):
+                formatted_amount = "$0.00"
+            
+            order_str = (
+                f"Order ID: {order.get('order_id') or order.get('Order_ID', 'N/A')}, "
+                f"Products: {products}, "
+                f"Total: {formatted_amount}, "
+                f"Payment Method: {order.get('payment_method') or order.get('Payment_Method', 'N/A')}, "
+                f"Status: {order.get('order_status') or order.get('Order_Status', 'N/A')}"
+            )
+            order_details.append(order_str)
+        
+        fulfillment_text = "Here are your orders:\n" + "\n".join(order_details)
+
+    return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+def delete_order_handler(parameters: dict, session_id: str):
+    """
+    Handle 'delete order' intent to delete a specific order by Order_ID if its status is 'processing'.
+    """
+    order_id = parameters.get('Order_ID')
+
+    # Validate input
+    if not order_id:
+        fulfillment_text = "Please provide an Order ID."
+        return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+    try:
+        order_id = int(order_id)
+    except ValueError:
+        fulfillment_text = "Invalid Order ID. Please provide a valid number."
+        return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+    success = db_helper.delete_order(order_id)
+    if success:
+        fulfillment_text = f"Successfully deleted Order ID {order_id}."
+    else:
+        fulfillment_text = f"Failed to delete Order ID {order_id}. It may not exist or the order status is not 'processing'."
+
+    return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+def update_shipping_address_handler(parameters: dict, session_id: str):
+    """
+    Handle 'update shipping address' intent to update the shipping address for a specific order.
+    """
+    order_id = parameters.get('Order_ID')
+    customer_id = parameters.get('number')
+
+    person_param = parameters.get('person')
+    if isinstance(person_param, dict):
+        receiver_name = person_param.get('name')
+    elif isinstance(person_param, list) and len(person_param) > 0:
+
+        receiver_name = person_param[0]
+    else:
+        receiver_name = person_param
+    
+    receiver_phone = parameters.get('phone-number')
+    country = parameters.get('geo-country')
+    city = parameters.get('geo-city')
+    province_state = parameters.get('province')
+    postal_code = parameters.get('postal_code') 
+
+    required_fields = {
+        'Order ID': order_id,
+        'Customer ID': customer_id,
+        'Receiver Name': receiver_name,
+        'Receiver Phone': receiver_phone,
+        'Country': country,
+        'City': city,
+        'Province/State': province_state,
+        'Postal Code': postal_code
+    }
+    missing_fields = [field for field, value in required_fields.items() if not value]
+    if missing_fields:
+        fulfillment_text = f"Please provide all required fields: {', '.join(missing_fields)}."
+        return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+    try:
+        order_id = int(order_id)
+        customer_id = int(customer_id)
+    except (ValueError, TypeError): 
+        fulfillment_text = "Invalid Order ID or Customer ID. Please provide valid numbers."
+        return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+    success = db_helper.update_shipping_address(
+        order_id, customer_id, receiver_name, receiver_phone, country, city, province_state, postal_code
+    )
+    if success:
+        fulfillment_text = f"Successfully updated shipping address for Order ID {order_id}."
+    else:
+        fulfillment_text = (f"Failed to update shipping address for Order ID {order_id}. "
+                           "It may not exist, not belong to the customer, or its status is not 'processing'.")
+
+    return JSONResponse(content={"fulfillmentText": fulfillment_text})
