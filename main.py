@@ -2,91 +2,70 @@ from venv import logger
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import db_helper
+import generic_helper
 from datetime import datetime, timedelta
 
 app = FastAPI()
 
-# Global dictionary to track in-progress orders per session
 inprogress_orders = {}
+customer_id = 1
+
+def convert_decimals_to_floats(product_list):
+    return [
+        (item[0], float(item[1]), item[2], item[3])
+        for item in product_list
+    ]
 
 @app.post("/")
+
 async def handle_request(request: Request):
     payload = await request.json()
-
     intent = payload['queryResult']['intent']['displayName']
     parameters = payload['queryResult']['parameters']
     output_contexts = payload['queryResult']['outputContexts']
+    session_id = generic_helper.extract_session_id(output_contexts[0]["name"])
 
-    session_id = payload.get('session', 'unknown_session')
+    intent_handler_dict = {
+        'search.by.brand - context: ongoing-order': search_by_brand,
+        'search.by.price - context: ongoing-order': search_by_price,
+        'show.product.detail.by.id : context: ongoing-order': search_by_id,
+        'choose.cheapest.product - context: ongoing-order': choose_cheapest_product,
+        'confirm.product.order : context: ongoing-order': confirm_order,
+        'Update.order : context: edit-order': update_order,
+        'user.confirm_checkout : context: ongoing-order': proceed_to_checkout,
+        'apply-coupon-code : context: ongoing-applyCode': apply_coupon_code,
+        'identify-customer - context: ongoing-identify': identify_customer,
+        'confirm-customer-info - context: ongoing-confirm-info': confirm_customer_info,
+        'use-default-address - context: ongoing-address': use_default_address,
+        'new-shipping-address - context: ongoing-address': request_new_shipping_address,
+        'provide-new-shipping-address - context: ongoing-new-address': process_new_shipping_address,
+        'confirm-new-address - context: ongoing-new-address': confirm_new_address,
+        'confirm-shipping-method - context: ongoing-shipping-method': confirm_shipping_method,
+        'select-payment-method - context: ongoing-payment-method': select_payment_method,
+        'confirm-order - context: ongoing-order-confirmation': confirm_order_placement,
+        'cancel-order - context: ongoing-order-confirmation': cancel_order,
+        'remove-items - context: ongoing-order-confirmation': remove_items,
+        'end-conversation - context: ongoing-order-complete': end_conversation,
+        'showlist.confirm - context: ongoing-tracking': show_customer_orders,
+        'delete - context: ongoing-tracking': delete_order_handler,
+        'update.address.confirm - context: ongoing-tracking': update_shipping_address_handler,
+        'submit_review_start': submit_review_start,
+        'submit_review_product_confirm': submit_review_product_confirm,
+        'submit_review_details_collect': submit_review_details_collect,
+        'submit_review_edit': submit_review_edit,
+        'submit_review_submit': submit_review_submit,
+        'submit_review_end': submit_review_end,
+        'submit_review_cancel': submit_review_cancel,
+        'submit_review_select_different_product': submit_review_select_different_product,
+        'submit_review_continue': submit_review_continue
+    }
 
-    if intent == "search.by.brand - context: ongoing-order":
-        return search_by_brand(parameters)
-    
-    if intent == "search.by.price - context: ongoing-order":
-        return search_by_price(parameters)
-    
-    if intent == "show.product.detail.by.id : context: ongoing-order":
-        return search_by_id(parameters)
-    
-    if intent == "choose.cheapest.product - context: ongoing-order":
-        return choose_cheapest_product(parameters)
-
-    if intent == "confirm.product.order : context: ongoing-order":
-        return confirm_order(parameters, session_id)
-    
-    elif intent == "Update.order : context: edit-order":
-        return update_order(parameters, session_id)
-    
-    if intent == "user.confirm_checkout : context: ongoing-order":
-        return proceed_to_checkout(parameters, session_id)
-    
-    if intent == "apply-coupon-code : context: ongoing-applyCode":
-        return apply_coupon_code(parameters, session_id)
-    
-    if intent == "identify-customer - context: ongoing-identify":
-        return identify_customer(parameters, session_id)
-
-    if intent == "confirm-customer-info - context: ongoing-confirm-info":
-        return confirm_customer_info(parameters, session_id)
-
-    if intent == "use-default-address - context: ongoing-address":
-        return use_default_address(parameters, session_id)
-    
-    if intent == "new-shipping-address - context: ongoing-address":
-        return request_new_shipping_address(parameters, session_id)
-
-    if intent == "provide-new-shipping-address - context: ongoing-new-address":
-        return process_new_shipping_address(parameters, session_id)
-
-    if intent == "confirm-new-address - context: ongoing-new-address":
-        return confirm_new_address(parameters, session_id)
-    
-    if intent == "confirm-shipping-method - context: ongoing-shipping-method":
-        return confirm_shipping_method(parameters, session_id)   
-
-    if intent == "select-payment-method - context: ongoing-payment-method":
-        return select_payment_method(parameters, session_id) 
-    
-    if intent == "confirm-order - context: ongoing-order-confirmation":
-        return confirm_order_placement(parameters, session_id)
-    
-    if intent == "cancel-order - context: ongoing-order-confirmation":
-        return cancel_order(parameters, session_id)
-
-    if intent == "remove-items - context: ongoing-order-confirmation":
-        return remove_items(parameters, session_id)
-
-    if intent == "end-conversation - context: ongoing-order-complete":
-        return end_conversation(parameters, session_id)
-    
-    if intent == "showlist.confirm - context: ongoing-tracking":
-        return show_customer_orders(parameters, session_id)
-    
-    if intent == "delete - context: ongoing-tracking":
-        return delete_order_handler(parameters, session_id)
-    
-    if intent == "update.address.confirm - context: ongoing-tracking":
-        return update_shipping_address_handler(parameters, session_id)
+    if intent in intent_handler_dict:
+        return intent_handler_dict[intent](parameters, output_contexts, session_id)
+    else:
+        return JSONResponse(content={
+            "fulfillmentText": f"Sorry, I don't understand the intent '{intent}'. Please try again."
+        })
 
 def search_by_brand(parameters: dict):
     brand_name_item = parameters["brand-name-item"]
@@ -1177,7 +1156,43 @@ def end_conversation(parameters: dict, session_id: str):
     if session_id in inprogress_orders:
         del inprogress_orders[session_id]
 
-    return JSONResponse(content={"fulfillmentText": response_text})
+    # Tạo session path để xóa các context liên quan
+    session_path = session_id.split('/sessions/')[0] + '/sessions/' + session_id.split('/sessions/')[1]
+
+    return JSONResponse(content={
+        "fulfillmentText": response_text,
+        "outputContexts": [
+            # Xóa tất cả các context liên quan đến submit_review
+            {
+                "name": f"{session_path}/contexts/ongoing-order",
+                "lifespanCount": 0
+            },
+            {
+                "name": f"{session_path}/contexts/ongoing-new-address",
+                "lifespanCount": 0
+            },
+            {
+                "name": f"{session_path}/contexts/ongoing-new-adress",
+                "lifespanCount": 0
+            },
+            {
+                "name": f"{session_path}/contexts/ongoing-confirm-info",
+                "lifespanCount": 0
+            },
+            {
+                "name": f"{session_path}/contexts/ongoing-default-address",
+                "lifespanCount": 0
+            },
+            {
+                "name": f"{session_path}/contexts/ongoing-identify",
+                "lifespanCount": 0
+            },
+            {
+                "name": f"{session_path}/contexts/edit-order",
+                "lifespanCount": 0
+            }
+        ]
+        })
 
 def cancel_order(parameters: dict, session_id: str):
     if session_id not in inprogress_orders:
@@ -1358,7 +1373,23 @@ def delete_order_handler(parameters: dict, session_id: str):
     else:
         fulfillment_text = f"Failed to delete Order ID {order_id}. It may not exist or the order status is not 'processing'."
 
-    return JSONResponse(content={"fulfillmentText": fulfillment_text})
+    # Tạo session path để xóa các context liên quan
+    session_path = session_id.split('/sessions/')[0] + '/sessions/' + session_id.split('/sessions/')[1]
+
+    return JSONResponse(content={
+        "fulfillmentText": fulfillment_text,
+        "outputContexts": [
+            # Xóa tất cả các context liên quan đến submit_review
+            {
+                "name": f"{session_path}/contexts/ongoing-tracking",
+                "lifespanCount": 0
+            },
+            {
+                "name": f"{session_path}/contexts/delete-tracking-ordered",
+                "lifespanCount": 0
+            }
+        ]
+    })
 
 def update_shipping_address_handler(parameters: dict, session_id: str):
     """
@@ -1413,4 +1444,577 @@ def update_shipping_address_handler(parameters: dict, session_id: str):
         fulfillment_text = (f"Failed to update shipping address for Order ID {order_id}. "
                            "It may not exist, not belong to the customer, or its status is not 'processing'.")
 
+    # Tạo session path để xóa các context liên quan
+    session_path = session_id.split('/sessions/')[0] + '/sessions/' + session_id.split('/sessions/')[1]
+
+    return JSONResponse(content={
+        "fulfillmentText": fulfillment_text,
+        "outputContexts": [
+            # Xóa tất cả các context liên quan đến submit_review
+            {
+                "name": f"{session_path}/contexts/ongoing-tracking",
+                "lifespanCount": 0
+            },
+            {
+                "name": f"{session_path}/contexts/delete-tracking-ordered",
+                "lifespanCount": 0
+            }
+        ]
+    })
+
+def submit_review_start(parameters: dict, output_contexts: list, session_id: str):
+    unreviewed_products = db_helper.get_unreviewed_products(customer_id)
+    unreviewed_products = convert_decimals_to_floats(unreviewed_products)
+    product = parameters.get("product")
+    if isinstance(product, list):
+        product = product[0] if product else None
+
+    if not unreviewed_products:
+        fulfillment_text = "It looks like you haven’t purchased any products yet, or all your products are already reviewed!"
+        return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+    if product:
+        product_details = db_helper.get_product_details(product)
+        if product_details:
+            product_details = list(product_details)
+            product_details[1] = float(product_details[1])  # Chuyển đổi Decimal thành float
+        product_names = [p[0] for p in unreviewed_products]
+        if product_details and product in product_names:
+            fulfillment_text = (f"Thanks for sharing, John! For {product} (${product_details[1]}, {product_details[5]} brand, "
+                               f"{product_details[6]} category): Rating: Would you like to give it a rating from 1 to 5 stars? "
+                               f"Comment: Please confirm or provide additional details, and I’ll submit the review for you, or say 'cancel' to exit.")
+            return JSONResponse(content={"fulfillmentText": fulfillment_text})
+        else:
+            product_list = ", ".join([f"{p[0]} (${p[1]}, {p[2]} brand, {p[3]} category)" for p in unreviewed_products])
+            fulfillment_text = (f"Sorry, {product} is either not in your purchase history or has not been delivered yet. "
+                               f"Please choose from the following unreviewed products: {product_list}, or say 'cancel' to exit.")
+    else:
+        product_list = ", ".join([f"{p[0]} (${p[1]}, {p[2]} brand, {p[3]} category)" for p in unreviewed_products])
+        fulfillment_text = (f"Awesome, we’d love to hear your feedback! Based on your order history, "
+                           f"here are your unreviewed products: {product_list}. "
+                           f"Please specify which product you’d like to review (e.g., 'Product 1'), or say 'cancel' to exit.")
+
     return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+def submit_review_product_confirm(parameters: dict, output_contexts: list, session_id: str):
+    product = parameters.get("product")
+    if isinstance(product, list):
+        product = product[0] if product else None
+    initial_comment = parameters.get("initial_comment", "")
+    if isinstance(initial_comment, list):
+        initial_comment = initial_comment[0] if initial_comment else ""
+
+    unreviewed_products = db_helper.get_unreviewed_products(customer_id)
+    unreviewed_products = convert_decimals_to_floats(unreviewed_products)
+    if not product:
+        for context in output_contexts:
+            if context["name"].endswith("submit_review_active"):
+                params = context.get("parameters", {})
+                product = params.get("product")
+                break
+
+    if not product:
+        product_list = ", ".join([f"{p[0]} (${p[1]}, {p[2]} brand, {p[3]} category)" for p in unreviewed_products])
+        fulfillment_text = f"Please specify a product to review from the list: {product_list}, or say 'cancel' to exit."
+        return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+    product_details = db_helper.get_product_details(product)
+    if product_details:
+        product_details = list(product_details)
+        product_details[1] = float(product_details[1])  # Chuyển đổi Decimal thành float
+    product_names = [p[0] for p in unreviewed_products]
+    if not product_details or product not in product_names:
+        product_list = ", ".join([f"{p[0]} (${p[1]}, {p[2]} brand, {p[3]} category)" for p in unreviewed_products])
+        fulfillment_text = (f"Sorry, {product} is either not in your purchase history or has not been delivered yet. "
+                           f"Please choose from your unreviewed products: {product_list}, or say 'cancel' to exit.")
+        return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+    name, price, _, _, _, brand, category = product_details
+    fulfillment_text = (f"Thanks for sharing, John! For {name} (${price}, {brand} brand, {category} category): "
+                       f"Rating: Would you like to give it a rating from 1 to 5 stars? "
+                       f"Comment: {initial_comment} "
+                       f"Please confirm or provide additional details, and I’ll submit the review for you, or say 'cancel' to exit.")
+    return JSONResponse(content={"fulfillmentText": fulfillment_text,})
+
+def submit_review_details_collect(parameters: dict, output_contexts: list, session_id: str):
+    product = parameters.get("product") or parameters.get("product-name")
+    rating = parameters.get("rating")
+    comment = parameters.get("comment", "")
+    
+    if isinstance(product, list):
+        product = product[0] if product else None
+    if isinstance(rating, list):
+        rating = rating[0] if rating else None
+    if isinstance(comment, list):
+        comment = comment[0] if comment else ""
+
+    unreviewed_products = db_helper.get_unreviewed_products(customer_id)
+    unreviewed_products = convert_decimals_to_floats(unreviewed_products)
+    if not product:
+        for context in output_contexts:
+            if context["name"].endswith("submit_review_active"):
+                params = context.get("parameters", {})
+                context_product = params.get("product") or params.get("product-name")
+                # Xử lý context product cũng có thể là array
+                if isinstance(context_product, list):
+                    product = context_product[0] if context_product else None
+                else:
+                    product = context_product
+                break
+
+    product_names = [p[0] for p in unreviewed_products]
+    if not product or product not in product_names:
+        product_list = ", ".join([f"{p[0]} (${p[1]}, {p[2]} brand, {p[3]} category)" for p in unreviewed_products])
+        if not unreviewed_products:
+            fulfillment_text = "It looks like you haven’t purchased any products yet, or all your products are already reviewed!"
+        else:
+            fulfillment_text = (f"Sorry, {product} is either not in your purchase history or has not been delivered yet. "
+                               f"Please choose from: {product_list}, or say 'cancel' to exit.")
+        return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+    if not rating:
+        fulfillment_text = f"Please provide a rating from 1 to 5 stars for {product}, or say 'cancel' to exit."
+        return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+    # Chuyển rating thành float để đảm bảo giá trị hợp lệ
+    try:
+        rating = float(rating)
+        if rating < 1 or rating > 5:
+            raise ValueError
+    except (ValueError, TypeError):
+        fulfillment_text = f"Please provide a valid rating from 1 to 5 stars for {product}, or say 'cancel' to exit."
+        return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+    fulfillment_text = (f"Here’s your review for {product}: "
+                       f"Rating: {rating}/5 "
+                       f"Comment: {comment} "
+                       f"Would you like to edit your rating or comment before I submit it? Or say 'submit it now' to proceed, or 'cancel' to exit.")
+    return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+def submit_review_edit(parameters: dict, output_contexts: list, session_id: str):
+    # Trích xuất từ context
+    product = None
+    rating = None
+    comment = None
+    unreviewed_products = None
+    for context in output_contexts:
+        if context["name"].endswith("submit_review_confirm"):
+            params = context.get("parameters", {})
+            product = params.get("product")
+            rating = params.get("rating")
+            comment = params.get("comment")
+            unreviewed_products = params.get("unreviewed_products")
+            break
+
+    # Xử lý kiểu dữ liệu
+    if isinstance(product, list):
+        product = product[0] if product else None
+    if isinstance(rating, list):
+        rating = rating[0] if rating else None
+    if isinstance(comment, list):
+        comment = comment[0] if comment else None
+    if isinstance(unreviewed_products, list):
+        unreviewed_products = unreviewed_products if unreviewed_products else []
+
+    # Debug log để kiểm tra giá trị từ context
+    debug_info = f"Context values - product: {product}, rating: {rating}, comment: {comment}, unreviewed_products: {unreviewed_products}"
+
+    # Chuyển rating thành float nếu có
+    try:
+        rating = float(rating) if rating else None
+    except (ValueError, TypeError):
+        rating = None
+
+    # Trích xuất new_rating từ @Rating
+    new_rating = parameters.get("new_rating")
+    if isinstance(new_rating, list):
+        new_rating = new_rating[0] if new_rating else None
+    if new_rating:  # Chỉ xử lý nếu new_rating không rỗng
+        try:
+            # Trích xuất số từ @Rating (ví dụ: "4 stars" -> 4)
+            num = ''.join(filter(str.isdigit, str(new_rating)))
+            new_rating = float(num) if num else None
+            if new_rating and (new_rating < 1 or new_rating > 5):
+                new_rating = None  # Giữ rating cũ nếu không hợp lệ
+        except (ValueError, TypeError):
+            new_rating = None
+
+    # Trích xuất new_comment
+    new_comment = parameters.get("new_comment")
+    if isinstance(new_comment, list):
+        new_comment = new_comment[0] if new_comment else None
+    new_comment = new_comment if new_comment else None
+
+    # Cập nhật rating và comment
+    rating = new_rating if new_rating is not None and new_rating != "" else rating
+    comment = new_comment if new_comment is not None else comment
+
+    # Kiểm tra required fields
+    if not product or rating is None:
+        full_unreviewed_products = db_helper.get_unreviewed_products(customer_id)
+        full_unreviewed_products = convert_decimals_to_floats(full_unreviewed_products)
+        product_list = ", ".join([f"{p[0]} (${p[1]}, {p[2]} brand, {p[3]} category)" for p in full_unreviewed_products])
+        fulfillment_text = (f"Error: Missing required fields in edit. {debug_info}. "
+                           f"Please provide a rating from 1 to 5 stars for {product}, or choose a product from: {product_list}, or say 'cancel' to exit.")
+        return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+    fulfillment_text = (f"I’ve updated your review for {product}: "
+                       f"Rating: {rating}/5 "
+                       f"Comment: {comment} "
+                       f"Would you like to make more changes, or say 'submit it now' to proceed, or 'cancel' to exit?")
+    return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+def submit_review_submit(parameters: dict, output_contexts: list, session_id: str):
+    product = None
+    rating = None
+    comment = None
+    new_rating = None
+    new_comment = None
+    unreviewed_products = None
+    
+    # Lấy thông tin từ context submit_review_confirm
+    for context in output_contexts:
+        if context["name"].endswith("submit_review_confirm"):
+            params = context.get("parameters", {})
+            product = params.get("product") or params.get("product-name")
+            rating = params.get("rating")
+            comment = params.get("comment")
+            new_rating = params.get("new_rating")
+            new_comment = params.get("new_comment")
+            unreviewed_products = params.get("unreviewed_products")
+            break
+
+    # Xử lý kiểu dữ liệu cho các giá trị cũ
+    if isinstance(product, list):
+        product = product[0] if product else None
+    if isinstance(rating, list):
+        rating = rating[0] if rating else None
+    if isinstance(comment, list):
+        comment = comment[0] if comment else ""
+    if isinstance(unreviewed_products, list):
+        unreviewed_products = unreviewed_products if unreviewed_products else []
+
+    # Xử lý kiểu dữ liệu cho các giá trị mới
+    if isinstance(new_rating, list):
+        new_rating = new_rating[0] if new_rating else None
+    if isinstance(new_comment, list):
+        new_comment = new_comment[0] if new_comment else None
+
+    # Ưu tiên giá trị mới nếu có, không thì lấy giá trị cũ
+    final_rating = new_rating if new_rating is not None and new_rating != "" else rating
+    final_comment = new_comment if new_comment is not None and new_comment != "" else comment
+    
+    print(f"Debug info - final_rating: {final_rating}, final_comment: {final_comment}, product: {product}")
+    
+    # Chuyển đổi rating thành số
+    try:
+        final_rating = float(final_rating) if final_rating else None
+    except (ValueError, TypeError):
+        final_rating = None
+
+    # Lấy danh sách sản phẩm chưa review từ database
+    try:
+        full_unreviewed_products = db_helper.get_unreviewed_products(customer_id)
+        full_unreviewed_products = convert_decimals_to_floats(full_unreviewed_products)
+        
+        # Nếu unreviewed_products rỗng, lấy từ database
+        if not unreviewed_products:
+            unreviewed_products = [p[0] for p in full_unreviewed_products]
+            
+    except Exception as e:
+        print(f"Error getting unreviewed products: {str(e)}")
+        return JSONResponse(content={
+            "fulfillmentText": "Sorry, there was an error retrieving your products. Please try again later."
+        })
+
+    # Kiểm tra product và rating
+    if not product or final_rating is None:
+        if full_unreviewed_products:
+            product_list = ", ".join([f"{p[0]} (${p[1]}, {p[2]} brand, {p[3]} category)" for p in full_unreviewed_products])
+            fulfillment_text = f"Sorry, I couldn't submit the review for {product}. Please provide a rating and product, or choose from: {product_list}, or say 'cancel' to exit."
+        else:
+            fulfillment_text = "Sorry, I couldn't submit the review. Please provide a valid product and rating, or say 'cancel' to exit."
+        return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+    # Xác nhận sản phẩm hợp lệ
+    product_names = [p[0] for p in full_unreviewed_products]
+    if product not in product_names:
+        if full_unreviewed_products:
+            product_list = ", ".join([f"{p[0]} (${p[1]}, {p[2]} brand, {p[3]} category)" for p in full_unreviewed_products])
+            fulfillment_text = (f"Sorry, I couldn't submit the review for {product}. It's either not in your purchase history or has not been delivered yet. "
+                               f"Please choose from: {product_list}, or say 'cancel' to exit.")
+        else:
+            fulfillment_text = f"Sorry, {product} is not available for review. You have no unreviewed products at the moment."
+        return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+    # Submit review
+    try:
+        review_id = db_helper.insert_review(product, customer_id, final_rating, final_comment)
+        print(f"Review submitted successfully with ID: {review_id}")
+        review_date = datetime.now().strftime("%Y-%m-%d")
+        
+        # Tạo session path
+        session_path = session_id.split('/sessions/')[0] + '/sessions/' + session_id.split('/sessions/')[1]
+        
+        # Lấy danh sách sản phẩm còn lại sau khi submit
+        remaining_products = db_helper.get_unreviewed_products(customer_id)
+        remaining_products = convert_decimals_to_floats(remaining_products)
+        
+        # Base message cho review đã submit thành công
+        base_message = (f"Perfect! Here's the review for {product}: "
+                       f"Rating: {final_rating}/5 "
+                       f"Comment: {final_comment} "
+                       f"Customer: John Doe "
+                       f"Review Date: {review_date} "
+                       f"I've submitted the review, and it'll appear on the product page soon. "
+                       f"Your review will help other customers a lot! ")
+        
+        if remaining_products:
+            # Còn sản phẩm chưa review
+            product_list = ", ".join([f"{p[0]} (${p[1]}, {p[2]} brand, {p[3]} category)" for p in remaining_products])
+            fulfillment_text = (base_message + 
+                               f"Here are your remaining unreviewed products: {product_list}. "
+                               f"Please specify which product you'd like to review next, or say 'cancel' to exit.")
+            
+            return JSONResponse(content={
+                "fulfillmentText": fulfillment_text,
+                "outputContexts": [
+                    {
+                        "name": f"{session_path}/contexts/submit_review_continue-followup",
+                        "lifespanCount": 5,
+                        "parameters": {
+                            "remaining_products": [p[0] for p in remaining_products],
+                            "flow_state": "continue_selection",
+                            "product": product,
+                            "last_review_id": review_id,
+                        }
+                    },
+                    {
+                        "name": f"{session_path}/contexts/submit_review_delete",
+                        "lifespanCount": 5,
+                        "parameters": {
+                            "remaining_products": [p[0] for p in remaining_products],
+                            "flow_state": "continue_selection",
+                            "product": product,
+                            "last_review_id": review_id,
+                        }
+                    },
+                    # Disable các context khác để tránh conflict
+                    {
+                        "name": f"{session_path}/contexts/submit_review_active",
+                        "lifespanCount": 0
+                    },
+                    {
+                        "name": f"{session_path}/contexts/submit_review_confirm",
+                        "lifespanCount": 0
+                    }
+                ]
+            })
+        else:
+            # Đã review hết tất cả sản phẩm
+            fulfillment_text = (base_message + 
+                               "Great! You've reviewed all your products. Thank you for your feedback!")
+            
+            return JSONResponse(content={
+                "fulfillmentText": fulfillment_text,
+                "outputContexts": [
+                    {
+                        "name": f"{session_path}/contexts/submit_review_delete",
+                        "lifespanCount": 5,
+                        "parameters": {
+                            "flow_state": "completed",
+                            "product": product,
+                            "last_review_id": review_id,
+                        }
+                    },
+                    # Clear tất cả contexts khác
+                    {
+                        "name": f"{session_path}/contexts/submit_review_active",
+                        "lifespanCount": 0
+                    },
+                    {
+                        "name": f"{session_path}/contexts/submit_review_confirm",
+                        "lifespanCount": 0
+                    },
+                    {
+                        "name": f"{session_path}/contexts/submit_review_continue-followup",
+                        "lifespanCount": 0
+                    }
+                ]
+            })
+        
+    except Exception as e:
+        print(f"Error submitting review: {str(e)}")
+        fulfillment_text = f"Error: Failed to save review to database. Debug info - error: {str(e)}. Please try again, or say 'cancel' to exit."
+        return JSONResponse(content={"fulfillmentText": fulfillment_text})
+        
+def submit_review_continue(parameters: dict, output_contexts: list, session_id: str):
+    product = parameters.get("product")
+    if isinstance(product, list):
+        product = product[0] if product else None
+
+    # Lấy remaining_products từ context nếu có
+    remaining_products_from_context = None
+    for context in output_contexts:
+        if "continue_review_mode" in context["name"] or "submit_review_continue-followup" in context["name"]:
+            params = context.get("parameters", {})
+            remaining_products_from_context = params.get("remaining_products") or params.get("unreviewed_products")
+            break
+
+    # Nếu không có context, lấy từ database
+    if not remaining_products_from_context:
+        unreviewed_products = db_helper.get_unreviewed_products(customer_id)
+        unreviewed_products = convert_decimals_to_floats(unreviewed_products)
+    else:
+        # Nếu có context nhưng cần full info, vẫn query database
+        unreviewed_products = db_helper.get_unreviewed_products(customer_id)
+        unreviewed_products = convert_decimals_to_floats(unreviewed_products)
+
+    if not unreviewed_products:
+        fulfillment_text = "It looks like you've reviewed all your purchased products! If you need help with something else, just let me know, or say 'cancel' to exit."
+        return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+    if product:
+        product_details = db_helper.get_product_details(product)
+        if product_details:
+            product_details = list(product_details)
+            product_details[1] = float(product_details[1])
+        
+        product_names = [p[0] for p in unreviewed_products]
+        if product_details and product in product_names:
+            # Chuyển sang intent để nhập rating và comment
+            session_path = session_id.split('/sessions/')[0] + '/sessions/' + session_id.split('/sessions/')[1]
+            
+            fulfillment_text = (f"Thanks for choosing {product} (${product_details[1]}, {product_details[5]} brand, "
+                               f"{product_details[6]} category)! Please provide your rating (1-5 stars) and any comments for this product.")
+            
+            return JSONResponse(content={"fulfillmentText": fulfillment_text})
+        else:
+            product_list = ", ".join([f"{p[0]} (${p[1]}, {p[2]} brand, {p[3]} category)" for p in unreviewed_products])
+            fulfillment_text = (f"Sorry, {product} is either not in your purchase history, has not been delivered yet, or has already been reviewed. "
+                               f"Please choose from the following unreviewed products: {product_list}, or say 'cancel' to exit.")
+    else:
+        product_list = ", ".join([f"{p[0]} (${p[1]}, {p[2]} brand, {p[3]} category)" for p in unreviewed_products])
+        fulfillment_text = (f"Great! Based on your order history, here are your remaining unreviewed products: {product_list}. "
+                           f"Please specify which product you'd like to review (e.g., 'Product 1'), or say 'cancel' to exit.")
+
+    return JSONResponse(content={"fulfillment_text": fulfillment_text})
+
+def submit_review_end(parameters: dict, output_contexts: list, session_id: str):
+    fulfillment_text = ("You’re welcome, John! Thanks for taking the time to share your review. "
+                        "Your feedback is valuable and helps us improve our products and services. "
+                        "If you have any other questions or need assistance with anything else, "
+                        "just let me know. Have a great day!")
+    
+    # Tạo session path để xóa các context liên quan
+    session_path = session_id.split('/sessions/')[0] + '/sessions/' + session_id.split('/sessions/')[1]
+
+    return JSONResponse(content={
+        "fulfillmentText": fulfillment_text,
+        "outputContexts": [
+            # Xóa tất cả các context liên quan đến submit_review
+            {
+                "name": f"{session_path}/contexts/submit_review_active",
+                "lifespanCount": 0
+            },
+            {
+                "name": f"{session_path}/contexts/submit_review_confirm",
+                "lifespanCount": 0
+            },
+            {
+                "name": f"{session_path}/contexts/submit_review_continue-followup",
+                "lifespanCount": 0
+            },
+            {
+                "name": f"{session_path}/contexts/submit_review_collect",
+                "lifespanCount": 0
+            },
+            {
+                "name": f"{session_path}/contexts/submit_review_finalize",
+                "lifespanCount": 0
+            },
+            {
+                "name": f"{session_path}/contexts/submit_review_delete",
+                "lifespanCount": 0
+            }
+        ]
+    })
+
+def submit_review_cancel(parameters: dict, output_contexts: list, session_id: str):
+    review_id = None
+    
+    # Tìm review_id từ các output contexts
+    for context in output_contexts:
+        context_params = context.get("parameters", {})
+        if "last_review_id" in context_params:
+            review_id = context_params["last_review_id"]
+            print(f"Found review_id in context {context['name']}: {review_id}")
+            break
+    
+    # Fallback: thử lấy từ parameters nếu không tìm thấy trong contexts
+    if review_id is None:
+        review_id = parameters.get("last_review_id")
+        print(f"Review_id from parameters: {review_id}")
+    
+    print(f"Final review_id to delete: {review_id}")
+    
+    # Xóa review nếu có review_id
+    if review_id:
+        try:
+            db_helper.delete_review_by_id(review_id)
+            print(f"Successfully deleted review with ID: {review_id}")
+        except Exception as e:
+            print(f"Error deleting review {review_id}: {str(e)}")
+    else:
+        print("No review_id found to delete")
+    
+    fulfillment_text = ("No problem, John! I've canceled the review process. "
+                        "If you need help with something else, like tracking orders or finding new products.")
+    
+    # Tạo session path để xóa các context liên quan
+    session_path = session_id.split('/sessions/')[0] + '/sessions/' + session_id.split('/sessions/')[1]
+    
+    return JSONResponse(content={"fulfillmentText": fulfillment_text})
+
+def submit_review_select_different_product(parameters: dict, output_contexts: list, session_id: str):
+    product = parameters.get("product")
+    if isinstance(product, list):
+        product = product[0] if product else None
+
+    unreviewed_products = db_helper.get_unreviewed_products(customer_id)
+    unreviewed_products = convert_decimals_to_floats(unreviewed_products)
+    product_details = db_helper.get_product_details(product)
+    if product_details:
+        product_details = list(product_details)
+        product_details[1] = float(product_details[1])  # Chuyển đổi Decimal thành float
+
+    product_names = [p[0] for p in unreviewed_products]
+    if not product_details or product not in product_names:
+        product_list = ", ".join([f"{p[0]} (${p[1]}, {p[2]} brand, {p[3]} category)" for p in unreviewed_products])
+        fulfillment_text = (f"Sorry, {product} is either not in your purchase history or has not been delivered yet. "
+                           f"Please choose from: {product_list}, or say 'cancel' to exit.")
+        return JSONResponse(content={
+            "fulfillmentText": fulfillment_text,
+            "outputContexts": [{
+                "name": f"projects/{session_id}/agent/sessions/{session_id}/contexts/submit_review_active",
+                "lifespanCount": 5,
+                "parameters": {"unreviewed_products": [p[0] for p in unreviewed_products]}
+            }]
+        })
+
+    name, price, _, _, _, brand, category = product_details
+    fulfillment_text = (f"Thanks for letting me know, John! For {name} (${price}, {brand} brand, {category} category): "
+                       f"Rating: Would you like to give it a rating from 1 to 5 stars? "
+                       f"Comment: "
+                       f"Please confirm or provide additional details, and I’ll submit the review for you, or say 'cancel' to exit.")
+    return JSONResponse(content={
+        "fulfillmentText": fulfillment_text,
+        "outputContexts": [{
+            "name": f"projects/{session_id}/agent/sessions/{session_id}/contexts/submit_review_active",
+            "lifespanCount": 5,
+            "parameters": {
+                "product": product,
+                "unreviewed_products": [p[0] for p in unreviewed_products]
+            }
+        }]
+    })

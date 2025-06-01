@@ -1,3 +1,4 @@
+Đăng + Trang
 Kịch bản 1:
 hi 
 --> new order 
@@ -19,6 +20,7 @@ hi
 --> I confirm the order. You can place it now
 --> No, thanks.
 
+Xuân
 kịch bản1: track.order => show order list => delete:
 
 --> track order
@@ -27,18 +29,19 @@ kịch bản1: track.order => show order list => delete:
 --> I need to cancel order ID 11
 
 kịch bản 2: track.order => show order list => update địa chỉ
-track order
-show me my order list
-My name is Emma Wang
-I need to modify the shipping address
-Update shipping: order_id: 18, customer_id: 3, receiver_name: Tom Nguyen, receiver_phone: 6677889900, country: Vietnam, city: Ho Chi Minh, province_state: HCM, postal_code: 700000.
+--> track order
+--> show me my order list
+--> My name is Emma Wang
+--> I need to modify the shipping address
+--> Update shipping: order_id: 18, customer_id: 3, receiver_name: Tom Nguyen, receiver_phone: 6677889900, country: Vietnam, city: Ho Chi Minh, province_state: HCM, postal_code: 700000.
 
-
-I want to rate something I purchased.
-Product 3 
-It's great, 4 stars.
-Change the rating to 5 and keep the comment. (hoặc đổi cmt)
-submit it now
-I want to give feedback on Product 1.-> (k tồn tại hoặc chưa vận chuyển đến)
-I'd like to rate Product 2. (sửa product đề xuất)
-Cancel (tất cả các bước đều được)
+Nhung
+--> I want to rate something I purchased.
+--> Product 3 
+--> It's great, 4 stars.
+--> Change the rating to 5 and keep the comment. (hoặc đổi cmt)
+--> submit it now
+--> I want to give feedback on Product 2. (continue)
+--> It's great, 3 stars.
+--> submit it now
+--> Cancel (hủy comment gần nhất)
