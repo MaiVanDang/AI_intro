@@ -1,0 +1,130 @@
+# 🚀 Hướng dẫn cài đặt và chạy hệ thống Order Management
+
+## 📁 Cấu trúc thư mục
+
+Tạo cấu trúc thư mục như sau:
+
+```
+order_management/
+├── main.py                 # FastAPI server (từ artifact)
+├── db_helper.py           # File database helper của bạn
+├── generic_helper.py      # File helper của bạn  
+├── requirements.txt       # Dependencies
+├── static/
+│   └── index.html        # Giao diện web (từ artifact)
+└── README.md
+```
+
+## 📦 Cài đặt dependencies
+
+```bash
+# Tạo virtual environment (khuyến nghị)
+python -m venv venv
+
+# Kích hoạt virtual environment
+# Windows:
+venv\Scripts\activate
+# Linux/Mac:
+source venv/bin/activate
+
+# Cài đặt packages
+pip install fastapi uvicorn psycopg2-binary
+```
+
+## 🔧 Cấu hình Database
+
+1. Đảm bảo PostgreSQL đang chạy
+2. Kiểm tra thông tin kết nối trong `db_helper.py`:
+   ```python
+   cnx = psycopg2.connect(
+       host="localhost",
+       user="postgres", 
+       password="admin",
+       database="shopDB"
+   )
+   ```
+
+## 🏃‍♂️ Chạy ứng dụng
+
+```bash
+# Chạy FastAPI server
+python main.py
+
+# Hoặc sử dụng uvicorn trực tiếp
+uvicorn APIBackend:app --host 0.0.0.0 --port 8000 --reload
+```
+
+## 🌐 Truy cập ứng dụng
+
+- **Giao diện web**: http://localhost:8000
+- **API Documentation**: http://localhost:8000/docs
+- **Health check**: http://localhost:8000/health
+
+## 🔍 API Endpoints
+
+### 1. Lấy đơn hàng theo Customer ID
+```
+GET /api/orders?customer_id=1
+```
+
+### 2. Lấy đơn hàng theo tên khách hàng
+```
+GET /api/orders?customer_name=Emma Wang
+```
+
+### 3. Lấy thông tin khách hàng
+```
+GET /api/customer/1
+```
+
+### 4. Tìm khách hàng theo email/phone
+```
+GET /api/customer/search?email=john@example.com
+GET /api/customer/search?phone=0987654321
+```
+
+## 🛠️ Troubleshooting
+
+### Lỗi kết nối database:
+1. Kiểm tra PostgreSQL có đang chạy
+2. Xác nhận thông tin kết nối trong `db_helper.py`
+3. Kiểm tra firewall/port 5432
+
+### Lỗi CORS:
+- Server đã cấu hình CORS, nhưng nếu có vấn đề, kiểm tra domain trong `CORSMiddleware`
+
+### Lỗi không tìm thấy file:
+- Đảm bảo `index.html` nằm trong thư mục `static/`
+- Kiểm tra đường dẫn file trong `serve_homepage()`
+
+## 📝 Ghi chú
+
+1. **Production deployment**: 
+   - Thay đổi `allow_origins=["*"]` thành domain cụ thể
+   - Sử dụng HTTPS
+   - Cấu hình environment variables cho DB connection
+
+2. **Database optimization**:
+   - Thêm connection pooling
+   - Implement caching cho frequently accessed data
+   - Add database indexes nếu cần
+
+3. **Security**:
+   - Thêm authentication/authorization
+   - Validate input parameters
+   - Rate limiting
+
+## 🎯 Test thử nghiệm
+
+Dựa trên file `unitest.txt` của bạn, test với:
+- Customer ID: 1, 3
+- Customer name: "Emma Wang"
+
+## 🔄 Mở rộng
+
+Có thể dễ dàng thêm các endpoint khác như:
+- Tạo đơn hàng mới
+- Cập nhật trạng thái đơn hàng  
+- Xóa đơn hàng
+- Upload file excel/csv
+- Export báo cáo

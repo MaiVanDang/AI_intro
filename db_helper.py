@@ -419,7 +419,7 @@ def get_customer_orders(customer_id=None, customer_name=None):
                 JOIN product p ON oi.product_id = p.product_id
                 JOIN payment_method pm ON o.payment_method_id = pm.payment_method_id
                 JOIN customer c ON o.customer_id = c.customer_id
-                WHERE c.name ILIKE 'Emma Wang'
+                WHERE c.name ILIKE %s
                 GROUP BY o.order_id, o.total_amount, pm.method_name, o.order_status, o.order_date
                 ORDER BY o.order_date DESC;
             """
@@ -432,9 +432,9 @@ def get_customer_orders(customer_id=None, customer_name=None):
         return orders
 
     except Exception as e:
-        print(f"An error occurred: {e}")
+        print(f"An error occurred in get_customer_orders: {e}")
         return []
-    
+ 
 def delete_order(order_id):
     """
     Delete a specific order by Order_ID if its status is 'processing'.
@@ -700,25 +700,51 @@ def get_order_status(order_id):
 
 def search_products(category=None, brand=None):
     cursor = cnx.cursor()
-    query = """
-        SELECT p.Product_Name, p.Price, b.Brand_Name, pc.Category_Name
-        FROM Product p
-        JOIN Product_Category pc ON p.Category_ID = pc.Category_ID
-        JOIN Brand b ON p.Brand_ID = b.Brand_ID
-        WHERE 1=1
-    """
-    params = []
-    if category:
-        query += " AND pc.Category_Name = %s"
-        params.append(category)
-    if brand:
-        query += " AND b.Brand_Name = %s"
-        params.append(brand)
-    cursor.execute(query, params)
-    results = cursor.fetchall()
-    cursor.close()
-    return results
-
+    try:
+        query = """
+            SELECT 
+                p.product_id as id,
+                p.product_name as name,
+                p.description,
+                p.price,
+                pc.category_name as category,
+                p.stock_quantity as stock,
+                COALESCE(AVG(r.rating), 4.5) as rating
+            FROM product p
+            JOIN product_category pc ON p.category_id = pc.category_id
+            LEFT JOIN review r ON p.product_id = r.product_id
+            WHERE 1=1
+        """
+        params = []
+        
+        if category:
+            query += " AND pc.category_name = %s"
+            params.append(category)
+        
+        query += " GROUP BY p.product_id, p.product_name, p.description, p.price, pc.category_name, p.stock_quantity"
+        
+        cursor.execute(query, params)
+        results = cursor.fetchall()
+        
+        return [
+            {
+                "id": row[0],
+                "name": row[1],
+                "description": row[2],
+                "price": row[3],
+                "category": row[4],
+                "stock": row[5],
+                "rating": float(row[6])
+            }
+            for row in results
+        ]
+        
+    except Exception as e:
+        print(f"Error searching products: {e}")
+        return []
+    finally:
+        cursor.close()
+        
 def get_product_details(product_name):
     cursor = cnx.cursor()
     cursor.execute(

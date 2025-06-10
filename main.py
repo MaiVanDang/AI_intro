@@ -1,22 +1,77 @@
-from venv import logger
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
+import logging
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional
+import json
 import db_helper
 import generic_helper
-from datetime import datetime, timedelta
 
-app = FastAPI()
+import logging
+logger = logging.getLogger(__name__)
 
 inprogress_orders = {}
 customer_id = 1
 
-def convert_decimals_to_floats(product_list):
-    return [
-        (item[0], float(item[1]), item[2], item[3])
-        for item in product_list
-    ]
 
-@app.post("/")
+def safe_extract_session_id(context_name: str) -> str:
+    try:
+        if generic_helper:
+            return generic_helper.extract_session_id(context_name)
+        else:
+            parts = context_name.split('/')
+            for part in parts:
+                if 'sessions' in part:
+                    return part.split('sessions/')[-1].split('/')[0]
+            return "default_session"
+    except Exception as e:
+        return "default_session"
+    
+def create_response(text: str, contexts: Optional[list] = None) -> JSONResponse:
+    """Create a standardized response for Dialogflow"""
+    response = {
+        "fulfillmentText": text,
+        "source": "shopdb-chatbot"
+    }
+    
+    if contexts:
+        response["outputContexts"] = contexts
+    
+    return JSONResponse(content=response)
+
+# Intent handler functions
+def handle_welcome(parameters: dict, contexts: list, session_id: str):
+    """Handle welcome intent"""
+    return create_response(
+        "Xin chào! Tôi là trợ lý ảo của ShopDB. "
+        "Tôi có thể giúp bạn:\n"
+        "• Tìm kiếm sản phẩm theo thương hiệu hoặc giá\n"
+        "• Tra cứu thông tin đơn hàng\n"
+        "• Hỗ trợ đặt hàng và thanh toán\n"
+        "• Quản lý thông tin khách hàng\n\n"
+        "Bạn cần hỗ trợ gì hôm nay?"
+    )
+
+def handle_order_inquiry(parameters: dict, contexts: list, session_id: str):
+    """Handle order inquiry"""
+    return create_response(
+        "Để tra cứu đơn hàng, bạn có thể:\n"
+        "• Cung cấp ID khách hàng\n"
+        "• Cung cấp tên khách hàng\n"
+        "• Cung cấp email hoặc số điện thoại\n\n"
+        "Ví dụ: 'Tôi muốn xem đơn hàng của khách hàng ID 123'"
+    )
+
+def convert_decimals_to_floats(product_list):
+    """Convert decimal prices to floats for JSON serialization"""
+    try:
+        return [
+            (item[0], float(item[1]), item[2], item[3])
+            for item in product_list
+        ]
+    except Exception as e:
+        logger.error(f"Error converting decimals: {e}")
+        return product_list
 
 async def handle_request(request: Request):
     payload = await request.json()
@@ -66,8 +121,18 @@ async def handle_request(request: Request):
         return JSONResponse(content={
             "fulfillmentText": f"Sorry, I don't understand the intent '{intent}'. Please try again."
         })
+    
+def handle_customer_inquiry(parameters: dict, contexts: list, session_id: str):
+    """Handle customer inquiry"""
+    return create_response(
+        "Tôi có thể giúp bạn tìm kiếm thông tin khách hàng theo:\n"
+        "• Email\n"
+        "• Số điện thoại\n"
+        "• ID khách hàng\n\n"
+        "Bạn có thể cung cấp thông tin nào để tôi tìm kiếm?"
+    )
 
-def search_by_brand(parameters: dict):
+def search_by_brand(parameters: dict, output_contexts, session_id):
     brand_name_item = parameters["brand-name-item"]
     products = db_helper.get_list_products_by_brand(brand_name_item)
 
@@ -79,7 +144,7 @@ def search_by_brand(parameters: dict):
     else:
         return JSONResponse(content={"fulfillmentText": f"No product found for brand '{brand_name_item}'."})
 
-def search_by_price(parameters: dict):
+def search_by_price(parameters: dict, output_contexts, session_id):
     brand_name_item = parameters.get("brand-name-item", "")
     price_range = parameters.get("price-range", "")
     price = parameters.get("number")
@@ -99,7 +164,7 @@ def search_by_price(parameters: dict):
     else:
         return JSONResponse(content={"fulfillmentText": f"No product found for the given criteria."})
 
-def search_by_id(parameters: dict):
+def search_by_id(parameters: dict, output_contexts, session_id):
     product_id = parameters.get("number-integer")
     print(f"Received product_id: {product_id}")
     if isinstance(product_id, list) and len(product_id) > 0:
@@ -133,7 +198,7 @@ def search_by_id(parameters: dict):
     else:
         return JSONResponse(content={"fulfillmentText": "Product ID is required."})
 
-def choose_cheapest_product(parameters: dict):
+def choose_cheapest_product(parameters: dict, output_contexts, session_id):
     product = db_helper.get_product_cheapest()
     if product:  
         (
@@ -155,7 +220,7 @@ def choose_cheapest_product(parameters: dict):
     else:
         return JSONResponse(content={"fulfillmentText": "No product found."})
 
-def confirm_order(parameters: dict, session_id: str):
+def confirm_order(parameters: dict, output_contexts, session_id: str):
     product_names = parameters.get("product-name", [])
     quantities = parameters.get("number-integer", [])
 
@@ -248,7 +313,7 @@ def confirm_order(parameters: dict, session_id: str):
 
     return JSONResponse(content={"fulfillmentText": confirm_text})
 
-def update_order(parameters: dict, session_id: str) -> JSONResponse:
+def update_order(parameters: dict, output_contexts, session_id: str) -> JSONResponse:
     product_names = parameters.get("product-name", [])
     quantities = parameters.get("number-integer", [])
     
@@ -367,7 +432,7 @@ def update_order(parameters: dict, session_id: str) -> JSONResponse:
 
     return JSONResponse(content={"fulfillmentText": response_text})
 
-def proceed_to_checkout(parameters: dict, session_id: str):
+def proceed_to_checkout(parameters: dict, output_contexts, session_id: str):
 
     # Kiểm tra session tồn tại như code mẫu
     if session_id not in inprogress_orders:
@@ -423,7 +488,7 @@ def proceed_to_checkout(parameters: dict, session_id: str):
 
     return JSONResponse(content={"fulfillmentText": response_text})
 
-def apply_coupon_code(parameters: dict, session_id: str):
+def apply_coupon_code(parameters: dict, output_contexts, session_id: str):
     coupon_code = parameters.get("coupon_code", "").strip().upper()
     session_data = inprogress_orders.get(session_id, {})
     order_list = session_data.get("order_list", [])
@@ -466,7 +531,7 @@ def apply_coupon_code(parameters: dict, session_id: str):
 
     return JSONResponse(content={"fulfillmentText": response_text})
 
-def identify_customer(parameters: dict, session_id: str):
+def identify_customer(parameters: dict, output_contexts, session_id: str):
     email = parameters.get("email", "").strip()
     phone = parameters.get("phone-number", "").strip()
 
@@ -494,7 +559,7 @@ def identify_customer(parameters: dict, session_id: str):
         "fulfillmentText": "Customer not found. Please provide a valid email or phone number (e.g., 'My email is john.doe@example.com' or 'My phone is 1234567890')."
     })
 
-def confirm_customer_info(parameters: dict, session_id: str):
+def confirm_customer_info(parameters: dict, output_contexts, session_id: str):
     confirmation = parameters.get("confirmation", "").lower()
 
     if session_id not in inprogress_orders or not inprogress_orders[session_id].get("customer_info"):
@@ -535,7 +600,7 @@ def confirm_customer_info(parameters: dict, session_id: str):
             "fulfillmentText": "Let’s update your information. Please provide your correct email or phone number (e.g., 'My email is john.doe@example.com' or 'My phone is 1234567890')."
         })
 
-def use_default_address(parameters: dict, session_id: str):
+def use_default_address(parameters: dict, output_contexts, session_id: str):
     if session_id not in inprogress_orders or not inprogress_orders[session_id].get("customer_info"):
         return JSONResponse(content={
             "fulfillmentText": "Session not found. Please provide your email or phone number again to identify yourself."
@@ -605,7 +670,7 @@ def use_default_address(parameters: dict, session_id: str):
             "fulfillmentText": "No default address found. Please provide a new address with 'New address'."
         })
 
-def request_new_shipping_address(parameters: dict, session_id: str):
+def request_new_shipping_address(parameters: dict, output_contexts, session_id: str):
     if session_id not in inprogress_orders or not inprogress_orders[session_id].get("customer_info"):
         return JSONResponse(content={
             "fulfillmentText": "Session not found. Please provide your email or phone number again to identify yourself."
@@ -640,7 +705,7 @@ def request_new_shipping_address(parameters: dict, session_id: str):
     )
     return JSONResponse(content={"fulfillmentText": response_text})
 
-def process_new_shipping_address(parameters: dict, session_id: str):
+def process_new_shipping_address(parameters: dict, output_contexts, session_id: str):
     if session_id not in inprogress_orders or not inprogress_orders[session_id].get("customer_info"):
         return JSONResponse(content={
             "fulfillmentText": "Session not found. Please provide your email or phone number again to identify yourself."
@@ -758,7 +823,7 @@ def process_new_shipping_address(parameters: dict, session_id: str):
             "fulfillmentText": "Sorry, there was an error saving your new address. Please try again."
         })
 
-def confirm_new_address(parameters: dict, session_id: str):
+def confirm_new_address(parameters: dict, output_contexts, session_id: str):
     if session_id not in inprogress_orders or not inprogress_orders[session_id].get("shipping_address"):
         return JSONResponse(content={
             "fulfillmentText": "No shipping address found. Please provide a new address."
@@ -835,7 +900,7 @@ def confirm_new_address(parameters: dict, session_id: str):
         "fulfillmentText": "Please confirm if the address is correct (e.g., 'Yes' or let me know what to change)."
     })
 
-def confirm_shipping_method(parameters: dict, session_id: str):
+def confirm_shipping_method(parameters: dict, output_contexts, session_id: str):
     if session_id not in inprogress_orders:
         return JSONResponse(content={
             "fulfillmentText": "Session not found. Please start your order again."
@@ -943,7 +1008,7 @@ def confirm_shipping_method(parameters: dict, session_id: str):
 
     return JSONResponse(content={"fulfillmentText": summary_text})
 
-def select_payment_method(parameters: dict, session_id: str):
+def select_payment_method(parameters: dict, output_contexts, session_id: str):
     if session_id not in inprogress_orders:
         return JSONResponse(content={
             "fulfillmentText": "Session not found. Please start your order again."
@@ -1021,7 +1086,7 @@ def select_payment_method(parameters: dict, session_id: str):
 
     return JSONResponse(content={"fulfillmentText": summary_text})
 
-def confirm_order_placement(parameters: dict, session_id: str):
+def confirm_order_placement(parameters: dict, output_contexts, session_id: str):
     if session_id not in inprogress_orders:
         return JSONResponse(content={
             "fulfillmentText": "Session not found. Please start your order again."
@@ -1132,7 +1197,7 @@ def confirm_order_placement(parameters: dict, session_id: str):
         ]
     })
 
-def end_conversation(parameters: dict, session_id: str):
+def end_conversation(parameters: dict, output_contexts, session_id: str):
     if session_id not in inprogress_orders or "payment_method" not in inprogress_orders[session_id]:
         return JSONResponse(content={
             "fulfillmentText": "It seems your order was not completed. Please start a new order if needed."
@@ -1194,7 +1259,7 @@ def end_conversation(parameters: dict, session_id: str):
         ]
         })
 
-def cancel_order(parameters: dict, session_id: str):
+def cancel_order(parameters: dict, output_contexts, session_id: str):
     if session_id not in inprogress_orders:
         return JSONResponse(content={
             "fulfillmentText": "No order found to cancel. You can start a new order if you'd like!"
@@ -1206,7 +1271,7 @@ def cancel_order(parameters: dict, session_id: str):
     # Sử dụng default response từ Dialogflow
     return JSONResponse(content={"fulfillmentText": "Got it! Your order has been canceled as requested. If you change your mind, feel free to start a new order anytime. Thank you for visiting us. Let me know if there's anything else I can help with!"})
 
-def remove_items(parameters: dict, session_id: str):
+def remove_items(parameters: dict, output_contexts, session_id: str):
     if session_id not in inprogress_orders:
         return JSONResponse(content={
             "fulfillmentText": "No order found to modify. You can start a new order if you'd like!"
@@ -1305,7 +1370,7 @@ def remove_items(parameters: dict, session_id: str):
 
     return JSONResponse(content={"fulfillmentText": response_text})
 
-def show_customer_orders(parameters: dict, session_id: str):
+def show_customer_orders(parameters: dict, output_contexts, session_id: str):
     """
     Handle 'show customer orders' intent to display all orders for a customer.
     """
@@ -1350,7 +1415,7 @@ def show_customer_orders(parameters: dict, session_id: str):
 
     return JSONResponse(content={"fulfillmentText": fulfillment_text})
 
-def delete_order_handler(parameters: dict, session_id: str):
+def delete_order_handler(parameters: dict, output_contexts, session_id: str):
     """
     Handle 'delete order' intent to delete a specific order by Order_ID if its status is 'processing'.
     """
@@ -1391,7 +1456,7 @@ def delete_order_handler(parameters: dict, session_id: str):
         ]
     })
 
-def update_shipping_address_handler(parameters: dict, session_id: str):
+def update_shipping_address_handler(parameters: dict, output_contexts, session_id: str):
     """
     Handle 'update shipping address' intent to update the shipping address for a specific order.
     """
