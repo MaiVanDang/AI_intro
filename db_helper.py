@@ -102,6 +102,34 @@ def get_list_products_by_id(product_id):
     finally:
         cursor.close()
 
+def get_list_products_by_name(product_name):
+    cursor = cnx.cursor()
+    try:
+        query = """
+            SELECT 
+                p.product_name, 
+                p.description AS product_description,
+                p.price, 
+                p.specifications, 
+                b.brand_name, 
+                p.stock_quantity,
+                b.description AS brand_description,
+                b.origin_country 
+            FROM product p 
+            JOIN brand b ON p.brand_id = b.brand_id
+            WHERE p.product_id = %s;
+        """
+        cursor.execute(query, (product_name,))
+        results = cursor.fetchall()
+        return results
+    except Exception as e:
+        cnx.rollback()  
+        print(f"[ERROR] Failed to execute query: {e}")
+        return []
+    finally:
+        cursor.close()
+
+
 def get_product_cheapest():
     cursor = cnx.cursor()
     try:
@@ -744,7 +772,7 @@ def search_products(category=None, brand=None):
         return []
     finally:
         cursor.close()
-        
+
 def get_product_details(product_name):
     cursor = cnx.cursor()
     cursor.execute(

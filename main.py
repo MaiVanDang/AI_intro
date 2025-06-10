@@ -84,6 +84,7 @@ async def handle_request(request: Request):
         'search.by.brand - context: ongoing-order': search_by_brand,
         'search.by.price - context: ongoing-order': search_by_price,
         'show.product.detail.by.id : context: ongoing-order': search_by_id,
+        'show.product.detail.by.name : context: ongoing-order': search_by_name,
         'choose.cheapest.product - context: ongoing-order': choose_cheapest_product,
         'confirm.product.order : context: ongoing-order': confirm_order,
         'Update.order : context: edit-order': update_order,
@@ -197,6 +198,38 @@ def search_by_id(parameters: dict, output_contexts, session_id):
             return JSONResponse(content={"fulfillmentText": f"No product found for id '{product_id}'."})
     else:
         return JSONResponse(content={"fulfillmentText": "Product ID is required."})
+
+def search_by_name(parameters: dict, output_contexts, session_id):
+    product_name = parameters.get("product-name")
+    print(f"Received product_id: {product_name}")
+    if isinstance(product_name, list) and len(product_name) > 0:
+        product_name = product_name[0]
+    
+    if product_name:
+        products = db_helper.get_products_by_name(product_name)
+        if products:
+            product = products[0]
+            (
+                product_name,
+                product_description,
+                price,
+                specification,
+                brand_name,
+                stock_quantity,
+                brand_description,
+                origin_country
+            ) = product
+
+            response_text = (
+                f"Name: {product_name} - {product_description} "
+                f"Price: ${price} "
+                f"Brand: {brand_name} - {brand_description} from {origin_country}"
+            )
+            return JSONResponse(content={"fulfillmentText": response_text})
+        else:
+            return JSONResponse(content={"fulfillmentText": f"No product found for name '{product_name}'."})
+    else:
+        return JSONResponse(content={"fulfillmentText": "Product name is required."})
 
 def choose_cheapest_product(parameters: dict, output_contexts, session_id):
     product = db_helper.get_product_cheapest()
@@ -1091,13 +1124,11 @@ def confirm_order_placement(parameters: dict, output_contexts, session_id: str):
         return JSONResponse(content={
             "fulfillmentText": "Session not found. Please start your order again."
         })
-
     # Kiểm tra xem thông tin cần thiết đã sẵn sàng chưa
     if not all(key in inprogress_orders[session_id] for key in ["order_list", "shipping_address", "shipping_info", "payment_method", "customer_info"]):
         return JSONResponse(content={
             "fulfillmentText": "Order information is incomplete. Please ensure all steps (products, shipping, and payment) are confirmed."
         })
-
     # Lấy thông tin từ session
     order_list = inprogress_orders[session_id]["order_list"]
     shipping_info = inprogress_orders[session_id]["shipping_info"]
@@ -1140,7 +1171,6 @@ def confirm_order_placement(parameters: dict, output_contexts, session_id: str):
         return JSONResponse(content={
             "fulfillmentText": f"Payment method '{payment_method}' not found in database."
         })
-
     # Lấy shipping_method_id
     shipping_methods = db_helper.get_shipping_methods()
     shipping_method_id = None
@@ -1152,7 +1182,6 @@ def confirm_order_placement(parameters: dict, output_contexts, session_id: str):
         return JSONResponse(content={
             "fulfillmentText": f"Shipping method '{shipping_info['method_name']}' not found in database."
         })
-
     # Lấy shipping_address_id
     shipping_address_id = address["address_id"]
 
@@ -1183,82 +1212,75 @@ def confirm_order_placement(parameters: dict, output_contexts, session_id: str):
         return JSONResponse(content={
             "fulfillmentText": "Failed to place your order due to a database error. Please try again."
         })
-
     # Trả về order_id để Dialogflow sử dụng trong default response
-    return JSONResponse(content={
-        "fulfillmentText": f"Order placed successfully! Order ID: {order_id}. Is there anything else I can help you with today?",
-        "outputContexts": [
-            {
-                "name": f"{session_id}/contexts/ongoing-order-confirmation",
-                "parameters": {
-                    "order_id": order_id
-                }
-            }
-        ]
-    })
+    return JSONResponse(content={"fulfillmentText": f"Order placed successfully! Order ID: {order_id}. Is there anything else I can help you with today?",})
 
 def end_conversation(parameters: dict, output_contexts, session_id: str):
-    if session_id not in inprogress_orders or "payment_method" not in inprogress_orders[session_id]:
+    try:
+        if session_id not in inprogress_orders or "payment_method" not in inprogress_orders[session_id]:
+            return JSONResponse(content={
+                "fulfillmentText": "It seems your order was not completed. Please start a new order if needed."
+            })
+
+        payment_method = inprogress_orders[session_id]["payment_method"]
+        is_cod = payment_method.lower() == "cash on delivery"
+
+        if is_cod:
+            response_text = "It was a pleasure assisting you. Thank you for shopping with us, we hope you enjoy your purchase! If you have any questions later, feel free to come back and chat with us. Have a wonderful day!"
+        else:
+            response_text = f"Thank you! Since you've chosen {payment_method}, we'll now redirect you to the secure payment page to complete your transaction. If you have questions in the future, don't hesitate to ask."
+
+        # Xóa session sau khi hoàn tất
+        if session_id in inprogress_orders:
+            del inprogress_orders[session_id]
+
+        # Tạo session path để xóa các context liên quan
+        # Session ID từ Dialogflow thường có format: projects/.../sessions/[session-id]
+        # Chúng ta cần lấy full path từ output_contexts nếu có
+        session_path = session_id
+        if output_contexts and len(output_contexts) > 0:
+            # Lấy path từ context đầu tiên làm template
+            first_context_name = output_contexts[0].get('name', '')
+            if '/contexts/' in first_context_name:
+                session_path = first_context_name.split('/contexts/')[0]
+
         return JSONResponse(content={
-            "fulfillmentText": "It seems your order was not completed. Please start a new order if needed."
+            "fulfillmentText": response_text,
+            "outputContexts": [
+                # Xóa tất cả các context liên quan - sử dụng format đúng từ raw response
+                {
+                    "name": f"{session_path}/contexts/ongoing-order",
+                    "lifespanCount": 0
+                },
+                {
+                    "name": f"{session_path}/contexts/ongoing-new-address", 
+                    "lifespanCount": 0
+                },
+                {
+                    "name": f"{session_path}/contexts/ongoing-confirm-info",
+                    "lifespanCount": 0
+                },
+                {
+                    "name": f"{session_path}/contexts/ongoing-defaultaddress",  # Chú ý: không có dấu gạch ngang trong raw response
+                    "lifespanCount": 0
+                },
+                {
+                    "name": f"{session_path}/contexts/ongoing-identify",
+                    "lifespanCount": 0
+                },
+                {
+                    "name": f"{session_path}/contexts/edit-order",
+                    "lifespanCount": 0
+                }
+            ]
         })
-
-    payment_method = inprogress_orders[session_id]["payment_method"]
-    is_cod = payment_method.lower() == "cash on delivery"
-
-    if is_cod:
-        end_responses = [
-            "It was a pleasure assisting you. Thank you for shopping with us, we hope you enjoy your purchase! If you have any questions later, feel free to come back and chat with us. Have a wonderful day!"
-        ]
-    else:
-        end_responses = [
-            f"Thank you! Since you’ve chosen {payment_method}, we’ll now redirect you to the secure payment page to complete your transaction. If you have questions in the future, don’t hesitate to ask."
-        ]
-
-    response_text = end_responses
-
-    # Xóa session sau khi hoàn tất
-    if session_id in inprogress_orders:
-        del inprogress_orders[session_id]
-
-    # Tạo session path để xóa các context liên quan
-    session_path = session_id.split('/sessions/')[0] + '/sessions/' + session_id.split('/sessions/')[1]
-
-    return JSONResponse(content={
-        "fulfillmentText": response_text,
-        "outputContexts": [
-            # Xóa tất cả các context liên quan đến submit_review
-            {
-                "name": f"{session_path}/contexts/ongoing-order",
-                "lifespanCount": 0
-            },
-            {
-                "name": f"{session_path}/contexts/ongoing-new-address",
-                "lifespanCount": 0
-            },
-            {
-                "name": f"{session_path}/contexts/ongoing-new-adress",
-                "lifespanCount": 0
-            },
-            {
-                "name": f"{session_path}/contexts/ongoing-confirm-info",
-                "lifespanCount": 0
-            },
-            {
-                "name": f"{session_path}/contexts/ongoing-default-address",
-                "lifespanCount": 0
-            },
-            {
-                "name": f"{session_path}/contexts/ongoing-identify",
-                "lifespanCount": 0
-            },
-            {
-                "name": f"{session_path}/contexts/edit-order",
-                "lifespanCount": 0
-            }
-        ]
+    
+    except Exception as e:
+        print(f"Error in end_conversation: {e}")
+        return JSONResponse(content={
+            "fulfillmentText": "Thank you for your order! We'll process it shortly."
         })
-
+        
 def cancel_order(parameters: dict, output_contexts, session_id: str):
     if session_id not in inprogress_orders:
         return JSONResponse(content={
