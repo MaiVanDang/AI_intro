@@ -1399,37 +1399,72 @@ def show_customer_orders(parameters: dict, output_contexts, session_id: str):
     customer_id = parameters.get('number')
     customer_name = parameters.get('person')
 
-    # Convert customer_id to int if provided
-    if customer_id:
+    # Xử lý customer_id - handle both string and numeric types
+    if customer_id is not None:
         try:
-            customer_id = int(customer_id)
-        except ValueError:
+            # If it's already a number, use it directly
+            if isinstance(customer_id, (int, float)):
+                customer_id = int(customer_id)
+            # If it's a string, strip and convert
+            elif isinstance(customer_id, str) and customer_id.strip():
+                customer_id = int(customer_id.strip())
+            else:
+                customer_id = None
+        except (ValueError, TypeError):
             customer_id = None
+    else:
+        customer_id = None
 
+    # Xử lý customer_name - extract từ dictionary nếu cần
+    if customer_name is not None:
+        try:
+            if isinstance(customer_name, dict):
+                customer_name = customer_name.get('name', '')
+            # Convert to string first, then strip
+            customer_name = str(customer_name).strip()
+            if not customer_name:  # Nếu string rỗng sau khi strip
+                customer_name = None
+        except (ValueError, AttributeError, TypeError):
+            customer_name = None
+
+    if customer_id is None and customer_name is None:
+        return JSONResponse(content={
+            "fulfillmentText": "Please provide either a customer ID or customer name to search for orders."
+        })
+    
     # Fetch orders using db_helper
-    orders = db_helper.get_customer_orders(customer_id=customer_id, customer_name=customer_name)
+    try:
+        orders = db_helper.get_customer_orders(customer_id, customer_name)
+    except Exception as e:
+        print(f"Database error: {e}")
+        return JSONResponse(content={
+            "fulfillmentText": "Sorry, there was an error retrieving your orders. Please try again later."
+        })
 
     if not orders:
         fulfillment_text = "No orders found for this customer. Please check the ID or name and try again."
     else:
         order_details = []
         for order in orders:
-            # Xử lý trường hợp Product_Names có thể null
-            products = order.get('product_names') or order.get('Product_Names', 'No products')
+            
+            order_id = order.get('order_id', 'N/A')
+            products = order.get('Product_Names') or order.get('product_names', 'No products')
+            total_amount = order.get('total_amount', 0)
+            payment_method = order.get('Payment_Method') or order.get('payment_method', 'N/A')
+            order_status = order.get('order_status', 'N/A')
             
             # Format số tiền an toàn hơn
-            total_amount = order.get('total_amount') or order.get('Total_Amount', 0)
             try:
                 formatted_amount = f"${float(total_amount):,.2f}"
             except (ValueError, TypeError):
                 formatted_amount = "$0.00"
             
             order_str = (
-                f"Order ID: {order.get('order_id') or order.get('Order_ID', 'N/A')}, "
+                f"Order ID: {order_id}, "
                 f"Products: {products}, "
                 f"Total: {formatted_amount}, "
-                f"Payment Method: {order.get('payment_method') or order.get('Payment_Method', 'N/A')}, "
-                f"Status: {order.get('order_status') or order.get('Order_Status', 'N/A')}"
+                f"Payment Method: {payment_method}, "
+                f"Status: {order_status}"
             )
             order_details.append(order_str)
         
@@ -1442,113 +1477,137 @@ def delete_order_handler(parameters: dict, output_contexts, session_id: str):
     Handle 'delete order' intent to delete a specific order by Order_ID if its status is 'processing'.
     """
     order_id = parameters.get('Order_ID')
-
+    
     # Validate input
     if not order_id:
         fulfillment_text = "Please provide an Order ID."
-        return JSONResponse(content={"fulfillmentText": fulfillment_text})
-
-    try:
-        order_id = int(order_id)
-    except ValueError:
-        fulfillment_text = "Invalid Order ID. Please provide a valid number."
-        return JSONResponse(content={"fulfillmentText": fulfillment_text})
-
-    success = db_helper.delete_order(order_id)
-    if success:
-        fulfillment_text = f"Successfully deleted Order ID {order_id}."
-    else:
-        fulfillment_text = f"Failed to delete Order ID {order_id}. It may not exist or the order status is not 'processing'."
-
-    # Tạo session path để xóa các context liên quan
-    session_path = session_id.split('/sessions/')[0] + '/sessions/' + session_id.split('/sessions/')[1]
-
-    return JSONResponse(content={
-        "fulfillmentText": fulfillment_text,
-        "outputContexts": [
-            # Xóa tất cả các context liên quan đến submit_review
-            {
-                "name": f"{session_path}/contexts/ongoing-tracking",
-                "lifespanCount": 0
-            },
-            {
-                "name": f"{session_path}/contexts/delete-tracking-ordered",
-                "lifespanCount": 0
-            }
-        ]
-    })
-
-def update_shipping_address_handler(parameters: dict, output_contexts, session_id: str):
-    """
-    Handle 'update shipping address' intent to update the shipping address for a specific order.
-    """
-    order_id = parameters.get('Order_ID')
-    customer_id = parameters.get('number')
-
-    person_param = parameters.get('person')
-    if isinstance(person_param, dict):
-        receiver_name = person_param.get('name')
-    elif isinstance(person_param, list) and len(person_param) > 0:
-
-        receiver_name = person_param[0]
-    else:
-        receiver_name = person_param
+        return {
+            "fulfillmentText": fulfillment_text
+        }
     
-    receiver_phone = parameters.get('phone-number')
-    country = parameters.get('geo-country')
-    city = parameters.get('geo-city')
-    province_state = parameters.get('province')
-    postal_code = parameters.get('postal_code') 
-
-    required_fields = {
-        'Order ID': order_id,
-        'Customer ID': customer_id,
-        'Receiver Name': receiver_name,
-        'Receiver Phone': receiver_phone,
-        'Country': country,
-        'City': city,
-        'Province/State': province_state,
-        'Postal Code': postal_code
-    }
-    missing_fields = [field for field, value in required_fields.items() if not value]
-    if missing_fields:
-        fulfillment_text = f"Please provide all required fields: {', '.join(missing_fields)}."
-        return JSONResponse(content={"fulfillmentText": fulfillment_text})
-
+    # Convert to integer
     try:
         order_id = int(order_id)
-        customer_id = int(customer_id)
-    except (ValueError, TypeError): 
-        fulfillment_text = "Invalid Order ID or Customer ID. Please provide valid numbers."
-        return JSONResponse(content={"fulfillmentText": fulfillment_text})
-
-    success = db_helper.update_shipping_address(
-        order_id, customer_id, receiver_name, receiver_phone, country, city, province_state, postal_code
-    )
-    if success:
-        fulfillment_text = f"Successfully updated shipping address for Order ID {order_id}."
-    else:
-        fulfillment_text = (f"Failed to update shipping address for Order ID {order_id}. "
-                           "It may not exist, not belong to the customer, or its status is not 'processing'.")
-
-    # Tạo session path để xóa các context liên quan
-    session_path = session_id.split('/sessions/')[0] + '/sessions/' + session_id.split('/sessions/')[1]
-
-    return JSONResponse(content={
-        "fulfillmentText": fulfillment_text,
-        "outputContexts": [
-            # Xóa tất cả các context liên quan đến submit_review
-            {
-                "name": f"{session_path}/contexts/ongoing-tracking",
-                "lifespanCount": 0
-            },
-            {
-                "name": f"{session_path}/contexts/delete-tracking-ordered",
-                "lifespanCount": 0
+    except (ValueError, TypeError):
+        fulfillment_text = "Invalid Order ID. Please provide a valid number."
+        return {
+            "fulfillmentText": fulfillment_text
+        }
+    
+    try:
+        success = db_helper.delete_order(order_id)
+        
+        if success:
+            fulfillment_text = f"Successfully deleted Order ID {order_id}."
+        else:
+            fulfillment_text = f"Sorry, I cannot delete Order ID {order_id}. The order may not exist or is not in 'Processing' status. Only orders with 'Processing' status can be cancelled."
+        
+        # Extract base session path from existing output contexts
+        base_session_path = None
+        if output_contexts:
+            for context in output_contexts:
+                if context.get('name'):
+                    # Extract base path from existing context
+                    context_name = context['name']
+                    if '/contexts/' in context_name:
+                        base_session_path = context_name.split('/contexts/')[0]
+                        break
+        
+        # Fallback if we can't extract from contexts
+        if not base_session_path:
+            base_session_path = f"projects/shopdbchatbot-nhmk/locations/global/agent/sessions/{session_id}"
+        
+        response = {
+            "fulfillmentText": fulfillment_text,
+            "outputContexts": [
+                {
+                    "name": f"{base_session_path}/contexts/ongoing-tracking",
+                    "lifespanCount": 0
+                },
+                {
+                    "name": f"{base_session_path}/contexts/delete-tracking-ordered", 
+                    "lifespanCount": 0
+                }
+            ]
+        }
+        return JSONResponse(content=response)
+        
+    except Exception as e:
+        error_response = {
+            "fulfillmentText": f"Sorry, I encountered an error while trying to cancel Order ID {order_id}. Please try again later or contact support."
+        }
+        return JSONResponse(content=error_response)
+                
+def update_shipping_address_handler(parameters: dict, output_contexts, session_id: str):
+    try:
+        # Extract parameters - không cần .strip() vì đã là số
+        order_id = parameters.get('Order_ID')
+        customer_id = parameters.get('number')  # Key là 'number' trong parameters
+        
+        # Kiểm tra None
+        if order_id is None or customer_id is None:
+            return {
+                "fulfillmentText": "Missing Order ID or Customer ID",
+                "status": 400
             }
-        ]
-    })
 
+        # Chuyển đổi sang int nếu cần (bỏ qua nếu đã là số)
+        try:
+            order_id = int(order_id) if not isinstance(order_id, int) else order_id
+            customer_id = int(customer_id) if not isinstance(customer_id, int) else customer_id
+        except (ValueError, TypeError):
+            return {
+                "fulfillmentText": "Invalid Order ID or Customer ID. Please provide valid numbers.",
+                "status": 400
+            }
+
+        # Xử lý receiver_name (giữ nguyên như bạn đã làm)
+        person_param = parameters.get('person')
+        receiver_name = None
+        if isinstance(person_param, dict):
+            receiver_name = person_param.get('name')
+        elif isinstance(person_param, list) and len(person_param) > 0:
+            if isinstance(person_param[0], dict):
+                receiver_name = person_param[0].get('name')
+            else:
+                receiver_name = person_param[0]
+        
+        # Các tham số khác
+        receiver_phone = parameters.get('phone-number', '')
+        country = parameters.get('geo-country', '')
+        city = parameters.get('geo-city', '')
+        province_state = parameters.get('province', '')
+        postal_code = parameters.get('postal_code', '')
+
+        # Gọi hàm update
+        result = db_helper.update_shipping_address(
+            order_id, customer_id, receiver_name, 
+            receiver_phone, country, city, province_state, postal_code
+        )
+        
+        if result is True:
+            return {
+                "fulfillmentText": f"✅ Updated adress successfully #{order_id}",
+                "status": 200
+            }
+        elif result is False:
+            return {
+                "fulfillmentText": f"❌ Not update address. Order: #{order_id} does not exist, does not belong to you, or is not in status 'Processing' ",
+                "status": 400
+            }
+        else:
+            return {
+                "fulfillmentText": "⚠️ An error occurred while processing the request. Please try again later.",
+                "status": 500
+            }
+
+    except Exception as e:
+        print(f"Handler error: {e}")
+        return {
+            "fulfillmentText": "⚠️ System error. Please contact support.",
+            "status": 500
+        }
+        
 def submit_review_start(parameters: dict, output_contexts: list, session_id: str):
     unreviewed_products = db_helper.get_unreviewed_products(customer_id)
     unreviewed_products = convert_decimals_to_floats(unreviewed_products)

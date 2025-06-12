@@ -414,26 +414,28 @@ def get_customer_orders(customer_id=None, customer_name=None):
     try:
         cursor = cnx.cursor(cursor_factory=RealDictCursor)
 
-        if customer_id:
+        if customer_id is not None:
             query = """
                 SELECT 
-                    o.Order_ID,
-                    STRING_AGG(p.Product_Name, ', ') AS Product_Names,
-                    o.Total_Amount,
-                    pm.Method_Name AS Payment_Method,
-                    o.Order_Status,
-                    o.Order_Date
+                    o.order_id,
+                    STRING_AGG(p.product_name, ', ') AS Product_Names,
+                    o.total_amount,
+                    pm.method_name AS Payment_Method,
+                    o.order_status,
+                    o.order_date
                 FROM "Order" o
-                JOIN Order_Item oi ON o.Order_ID = oi.Order_ID
-                JOIN Product p ON oi.Product_ID = p.Product_ID
-                JOIN Payment_Method pm ON o.Payment_Method_ID = pm.Payment_Method_ID
-                JOIN Customer c ON o.Customer_ID = c.Customer_ID
-                WHERE c.Customer_ID = %s
-                GROUP BY o.Order_ID, o.Total_Amount, pm.Method_Name, o.Order_Status, o.Order_Date
-                ORDER BY o.Order_Date DESC;
+                JOIN order_item oi ON o.order_id = oi.order_id
+                JOIN product p ON oi.product_id = p.product_id
+                JOIN payment_method pm ON o.payment_method_id = pm.payment_method_id
+                JOIN customer c ON o.customer_id = c.customer_id
+                WHERE c.customer_id = %s
+                GROUP BY o.order_id, o.total_amount, pm.method_name, o.order_status, o.order_date
+                ORDER BY o.order_date DESC;
             """
             cursor.execute(query, (customer_id,))
-        elif customer_name:
+            orders = cursor.fetchall()
+                    
+        elif customer_name is not None:
             query = """
                 SELECT 
                     o.order_id,
@@ -452,118 +454,127 @@ def get_customer_orders(customer_id=None, customer_name=None):
                 ORDER BY o.order_date DESC;
             """
             cursor.execute(query, (f"%{customer_name}%",))
+            orders = cursor.fetchall()
         else:
+            cursor.close()
             return []
-
-        orders = cursor.fetchall()
+        
         cursor.close()
         return orders
 
     except Exception as e:
         print(f"An error occurred in get_customer_orders: {e}")
+        import traceback
+        traceback.print_exc()
         return []
  
 def delete_order(order_id):
     """
-    Delete a specific order by Order_ID if its status is 'processing'.
-    Returns True if successful, False if the order doesn't exist or status is not 'processing'.
+    Delete a specific order by Order_ID if its status is 'Processing'.
+    Returns True if successful, False if the order doesn't exist or status is not 'Processing'.
     """
-    if not cnx:
-        init_db_connection()
+    cursor = None
+    try:
+        if not cnx:
+            init_db_connection()
+        
         if not cnx:
             return False
-
-    try:
+        
         cursor = cnx.cursor()
-        # Check if the order exists and has status 'processing'
-        check_query = """
-                SELECT COUNT(*) FROM "Order"
-                WHERE order_id = %s AND order_status = 'Processing'
+        
+        debug_query = """
+            SELECT order_id, order_status FROM "Order" 
+            WHERE order_id = %s
         """
-        cursor.execute(check_query, (order_id,))
-        count = cursor.fetchone()[0]
-
-        if count == 0:
-            cursor.close()
+        cursor.execute(debug_query, (order_id,))
+        debug_result = cursor.fetchone()
+        
+        if debug_result:
+            
+            # Check if the order has status 'Processing'
+            if debug_result[1] != 'Processing':
+                return False
+        else:
             return False
-
-        # Delete from Order_Item first (due to foreign key constraint)
-        cursor.execute('DELETE FROM "order_item" WHERE order_id = %s', (order_id,))
-        # Delete from Order
-        cursor.execute('DELETE FROM "Order" WHERE order_id = %s', (order_id,))
-
-        cnx.commit()
-        cursor.close()
-        return True
-    except Error as err:
-        print(f"Error deleting order {order_id}: {err}")
+        
+        
+        delete_items_query = 'DELETE FROM "order_item" WHERE order_id = %s'
+        cursor.execute(delete_items_query, (order_id,))
+        items_deleted = cursor.rowcount
+        
+        delete_order_query = 'DELETE FROM "Order" WHERE order_id = %s'
+        cursor.execute(delete_order_query, (order_id,))
+        orders_deleted = cursor.rowcount
+        
+        if orders_deleted > 0:
+            cnx.commit()
+            return True
+        else:
+            return False
+            
+    except Exception as err:
         if cnx:
             cnx.rollback()
         return False
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        if cnx:
-            cnx.rollback()
-        return False 
-    
+    finally:
+        if cursor:
+            cursor.close()
+
 def update_shipping_address(order_id, customer_id, receiver_name, receiver_phone, country, city, province_state, postal_code):
     """
-    Update shipping address for a specific order by Order_ID if its status is 'processing'.
-    Inserts a new address into Shipping_Address and updates Order with the new Shipping_Address_ID.
-    Returns True if successful, False if the order doesn't exist, status is not 'processing', or error occurs.
+    Update shipping address ONLY if order status is 'Processing'
+    Returns:
+    - True: if update succeeded
+    - False: if order doesn't exist, doesn't belong to customer, or status is not 'Processing'
+    - None: if database error occurred
     """
     if not cnx:
         init_db_connection()
         if not cnx:
-            return False
+            return None
 
     cursor = None  
     try:
-        # Fix receiver_name if it's still a dict (fallback protection)
-        if isinstance(receiver_name, dict):
-            if 'name' in receiver_name:
-                receiver_name = receiver_name['name']
-            else:
-                receiver_name = str(receiver_name)
-        elif isinstance(receiver_name, list) and len(receiver_name) > 0:
-            first_item = receiver_name[0]
-            if isinstance(first_item, dict) and 'name' in first_item:
-                receiver_name = first_item['name']
-            else:
-                receiver_name = str(first_item)
-        
-        # Debug: Print values and types before executing query
-        print(f"Values being inserted:")
-        print(f"order_id: {type(order_id)} = {order_id}")
-        print(f"customer_id: {type(customer_id)} = {customer_id}")
-        print(f"receiver_name: {type(receiver_name)} = {receiver_name}")
-        print(f"receiver_phone: {type(receiver_phone)} = {receiver_phone}")
-        print(f"country: {type(country)} = {country}")
-        print(f"city: {type(city)} = {city}")
-        print(f"province_state: {type(province_state)} = {province_state}")
-        print(f"postal_code: {type(postal_code)} = {postal_code}")
+        # Debug info
+        print(f"Attempting to update shipping address for Order ID: {order_id}, Customer ID: {customer_id}")
         
         cursor = cnx.cursor()
         
-        check_query = """
-            SELECT COUNT(*) FROM "Order"
-            WHERE order_id = %s AND customer_id = %s AND order_status = 'Processing'
+        # 1. First check order status and ownership
+        status_check_query = """
+            SELECT order_status FROM "Order"
+            WHERE order_id = %s AND customer_id = %s
         """
-        cursor.execute(check_query, (order_id, customer_id))
-        count = cursor.fetchone()[0]
-
-        if count == 0:
+        cursor.execute(status_check_query, (order_id, customer_id))
+        result = cursor.fetchone()
+        
+        # Case 1: Order doesn't exist or doesn't belong to customer
+        if not result:
+            print(f"Order {order_id} not found or doesn't belong to customer {customer_id}")
             return False
-
+            
+        current_status = result[0]
+        
+        # Case 2: Order status is not 'Processing'
+        if current_status.lower() != 'processing':
+            print(f"Order {order_id} status is '{current_status}' - cannot update address")
+            return False
+            
+        # 2. Insert new shipping address
         insert_address_query = """
-            INSERT INTO "shipping_address" (customer_id, receiver_name, receiver_phone, country, city, province_state, postal_code)
+            INSERT INTO "shipping_address" 
+            (customer_id, receiver_name, receiver_phone, country, city, province_state, postal_code)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING address_id
         """
-        cursor.execute(insert_address_query, (customer_id, receiver_name, receiver_phone, country, city, province_state, postal_code))
+        cursor.execute(insert_address_query, 
+                      (customer_id, receiver_name, receiver_phone, 
+                       country, city, province_state, postal_code))
         
         new_address_id = cursor.fetchone()[0]
 
+        # 3. Update order with new address
         update_order_query = """
             UPDATE "Order"
             SET shipping_address_id = %s
@@ -572,23 +583,23 @@ def update_shipping_address(order_id, customer_id, receiver_name, receiver_phone
         cursor.execute(update_order_query, (new_address_id, order_id))
         
         cnx.commit()
-        
+        print(f"Successfully updated shipping address for Order {order_id}")
         return True
         
     except Error as err:
-        print(f"Error updating shipping address for order {order_id}: {err}")
+        print(f"Database error updating order {order_id}: {err}")
         if cnx:
             cnx.rollback()
-        return False
+        return None
     except Exception as e:
-        print(f"An error occurred: {e}")
+        print(f"Unexpected error: {e}")
         if cnx:
             cnx.rollback()
-        return False
+        return None
     finally:
         if cursor:
             cursor.close()
-
+            
 def insert_order_item(product_name, quantity, order_id):
     try:
         cursor = cnx.cursor()

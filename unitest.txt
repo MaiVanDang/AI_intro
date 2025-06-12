@@ -33,7 +33,7 @@ kịch bản 2: track.order => show order list => update địa chỉ
 --> show me my order list
 --> My name is Emma Wang
 --> I need to modify the shipping address
---> Update shipping: order_id: 18, customer_id: 3, receiver_name: Tom Nguyen, receiver_phone: 6677889900, country: Vietnam, city: Ho Chi Minh, province_state: HCM, postal_code: 700000.
+--> Update shipping: order_id: 10, customer_id: 5, receiver_name: Tom Nguyen, receiver_phone: 6677889900, country: Vietnam, city: Ho Chi Minh, province_state: HCM, postal_code: 700000.
 
 Nhung
 --> I want to rate something I purchased.
