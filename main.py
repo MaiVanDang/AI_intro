@@ -138,9 +138,10 @@ def search_by_brand(parameters: dict, output_contexts, session_id):
     products = db_helper.get_list_products_by_brand(brand_name_item)
 
     if products:
-        response_text = "id    product_name\n"
+        response_text = ""
         for prod_id, prod_name in products: 
-            response_text += f"{prod_id:<5} {prod_name}\n"
+            response_text += f"ID: {prod_id:<5} --> Name:{prod_name}||"
+        response_text += "Do you have a budget preference, or should I dive into details for a specific product?"
         return JSONResponse(content={"fulfillmentText": response_text.strip()})
     else:
         return JSONResponse(content={"fulfillmentText": f"No product found for brand '{brand_name_item}'."})
@@ -487,10 +488,10 @@ def proceed_to_checkout(parameters: dict, output_contexts, session_id: str):
             continue
         product = products[0]
         
-        product_name = product[0]
-        price = product[2]
-        brand_name = product[4]
-        origin_country = product[7]
+        product_name = product[0]        # product_name
+        price = product[2]               # price
+        brand_name = product[4]          # brand_name  
+        origin_country = product[7]      # origin_country
 
         if isinstance(price, str):
             price = float(price)
