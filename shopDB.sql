@@ -1,145 +1,152 @@
--- Tạo kiểu ENUM cho các trạng thái
-CREATE TYPE discount_type AS ENUM ('percentage', 'fixed_amount');
-CREATE TYPE promotion_status AS ENUM ('active', 'inactive', 'expired');
-CREATE TYPE payment_status AS ENUM ('paid', 'unpaid', 'pending');
+-- =================================================================
+-- SCRIPT TẠO DATABASE TỪ ĐẦU - DÙNG CHO QUERY TOOL
+-- Dữ liệu đã được làm đa dạng và thực tế hơn.
+-- =================================================================
 
--- Tạo bảng Brand
-CREATE TABLE Brand (
-    Brand_ID SERIAL PRIMARY KEY,
-    Brand_Name VARCHAR(255) NOT NULL,
-    Description TEXT,
-    Logo_URL VARCHAR(500),
-    Origin_Country VARCHAR(100)
+-- Bắt đầu một transaction: nếu có lỗi, tất cả sẽ được khôi phục.
+BEGIN;
+
+-- =================================================================
+-- PHẦN 1: TẠO CÁC KIỂU DỮ LIỆU TÙY CHỈNH (ENUMs)
+-- =================================================================
+
+CREATE TYPE public.discount_type AS ENUM (
+    'percentage',
+    'fixed_amount'
 );
 
--- Tạo bảng Product_Category
-CREATE TABLE Product_Category (
-    Category_ID SERIAL PRIMARY KEY,
-    Parent_Category_ID INT,
-    Category_Name VARCHAR(255) NOT NULL,
-    Description TEXT,
-    FOREIGN KEY (Parent_Category_ID) REFERENCES Product_Category(Category_ID)
+CREATE TYPE public.payment_status AS ENUM (
+    'paid',
+    'unpaid',
+    'pending'
 );
 
--- Tạo bảng Customer
-CREATE TABLE Customer (
-    Customer_ID SERIAL PRIMARY KEY,
-    Email VARCHAR(255) UNIQUE,
-    Phone VARCHAR(20),
-    Name VARCHAR(255),
-    Address TEXT
+CREATE TYPE public.promotion_status AS ENUM (
+    'active',
+    'inactive',
+    'expired'
 );
 
--- Tạo bảng Payment_Method
-CREATE TABLE Payment_Method (
-    Payment_Method_ID SERIAL PRIMARY KEY,
-    Method_Name VARCHAR(100),
-    Description TEXT
+-- =================================================================
+-- PHẦN 2: TẠO CẤU TRÚC CÁC BẢNG
+-- =================================================================
+
+CREATE TABLE public.brand (
+    brand_id integer NOT NULL,
+    brand_name character varying(255) NOT NULL,
+    description text,
+    logo_url character varying(500),
+    origin_country character varying(100)
 );
 
--- Tạo bảng Shipping_Method
-CREATE TABLE Shipping_Method (
-    Shipping_Method_ID SERIAL PRIMARY KEY,
-    Method_Name VARCHAR(100),
-    Description TEXT,
-    Cost_per_product DECIMAL(10,2),
-    average_delivery_time_per_km DECIMAL(5,2)
+CREATE TABLE public.product_category (
+    category_id integer NOT NULL,
+    parent_category_id integer,
+    category_name character varying(255) NOT NULL,
+    description text
 );
 
--- Tạo bảng Shipping_Address
-CREATE TABLE Shipping_Address (
-    Address_ID SERIAL PRIMARY KEY,
-    Customer_ID INT,
-    Receiver_Name VARCHAR(255),
-    Receiver_Phone VARCHAR(20),
-    Country VARCHAR(100),
-    City VARCHAR(100),
-    Province_State VARCHAR(100),
-    Postal_Code VARCHAR(20),
-    Is_Default BOOLEAN DEFAULT FALSE,
-    FOREIGN KEY (Customer_ID) REFERENCES Customer(Customer_ID)
+CREATE TABLE public.customer (
+    customer_id integer NOT NULL,
+    email character varying(255),
+    phone character varying(20),
+    name character varying(255),
+    address text
 );
 
--- Tạo bảng Promotion
-CREATE TABLE Promotion (
-    Promotion_ID SERIAL PRIMARY KEY,
-    Description TEXT,
-    Discount_Type discount_type,
-    Discount_Value DECIMAL(10,2),
-    Start_Date DATE,
-    End_Date DATE,
-    Coupon_Code VARCHAR(50),
-    Minimum_Order DECIMAL(10,2),
-    Status promotion_status
+CREATE TABLE public.payment_method (
+    payment_method_id integer NOT NULL,
+    method_name character varying(100),
+    description text
 );
 
--- Tạo bảng Product
-CREATE TABLE Product (
-    Product_ID SERIAL PRIMARY KEY,
-    Product_Name VARCHAR(255) NOT NULL,
-    Category_ID INT,
-    Brand_ID INT,
-    Description TEXT,
-    Price DECIMAL(10,2),
-    Stock_Quantity INT,
-    Image_URLs TEXT,
-    Specifications TEXT,
-    Created_Date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    Updated_Date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (Category_ID) REFERENCES Product_Category(Category_ID),
-    FOREIGN KEY (Brand_ID) REFERENCES Brand(Brand_ID)
+CREATE TABLE public.shipping_method (
+    shipping_method_id integer NOT NULL,
+    method_name character varying(100),
+    description text,
+    cost_per_product numeric(10,2),
+    average_delivery_time_per_km numeric(5,2)
 );
 
--- Tạo bảng Order
-CREATE TABLE "Order" (
-    Order_ID SERIAL PRIMARY KEY,
-    Customer_ID INT,
-    Payment_Method_ID INT,
-    Shipping_Method_ID INT,
-    Shipping_Address_ID INT,
-    Promotion_ID INT,
-    Order_Date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    Total_Amount DECIMAL(12,2),
-    Shipping_Fee DECIMAL(10,2),
-    Discount DECIMAL(10,2),
-    Payment_Status payment_status,
-    Order_Status VARCHAR(100),
-    Estimated_Delivery_Date DATE,
-    Note TEXT,
-    FOREIGN KEY (Customer_ID) REFERENCES Customer(Customer_ID),
-    FOREIGN KEY (Payment_Method_ID) REFERENCES Payment_Method(Payment_Method_ID),
-    FOREIGN KEY (Shipping_Method_ID) REFERENCES Shipping_Method(Shipping_Method_ID),
-    FOREIGN KEY (Shipping_Address_ID) REFERENCES Shipping_Address(Address_ID),
-    FOREIGN KEY (Promotion_ID) REFERENCES Promotion(Promotion_ID)
+CREATE TABLE public.shipping_address (
+    address_id integer NOT NULL,
+    customer_id integer,
+    receiver_name character varying(255),
+    receiver_phone character varying(20),
+    country character varying(100),
+    city character varying(100),
+    province_state character varying(100),
+    postal_code character varying(20),
+    is_default boolean DEFAULT false
 );
 
--- Tạo bảng Order_Item
-CREATE TABLE Order_Item (
-    Order_ID INT,
-    Product_ID INT,
-    Quantity INT,
-    PRIMARY KEY (Order_ID, Product_ID),
-    FOREIGN KEY (Order_ID) REFERENCES "Order"(Order_ID),
-    FOREIGN KEY (Product_ID) REFERENCES Product(Product_ID)
+CREATE TABLE public.promotion (
+    promotion_id integer NOT NULL,
+    description text,
+    discount_type public.discount_type,
+    discount_value numeric(10,2),
+    start_date date,
+    end_date date,
+    coupon_code character varying(50),
+    minimum_order numeric(10,2),
+    status public.promotion_status
 );
 
--- Tạo bảng Review
-CREATE TABLE Review (
-    Review_ID SERIAL PRIMARY KEY,
-    Product_ID INT,
-    Customer_ID INT,
-    Rating INT CHECK (Rating BETWEEN 1 AND 5),
-    Comment TEXT,
-    Review_Date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    Images TEXT,
-    FOREIGN KEY (Product_ID) REFERENCES Product(Product_ID),
-    FOREIGN KEY (Customer_ID) REFERENCES Customer(Customer_ID)
+CREATE TABLE public.product (
+    product_id integer NOT NULL,
+    product_name character varying(255) NOT NULL,
+    category_id integer,
+    brand_id integer,
+    description text,
+    price numeric(10,2),
+    stock_quantity integer,
+    image_urls text,
+    specifications text,
+    created_date timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_date timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE public."Order" (
+    order_id integer NOT NULL,
+    customer_id integer,
+    payment_method_id integer,
+    shipping_method_id integer,
+    shipping_address_id integer,
+    promotion_id integer,
+    order_date timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    total_amount numeric(12,2),
+    shipping_fee numeric(10,2),
+    discount numeric(10,2),
+    payment_status public.payment_status,
+    order_status character varying(100),
+    estimated_delivery_date date,
+    note text
+);
+
+CREATE TABLE public.order_item (
+    order_id integer NOT NULL,
+    product_id integer NOT NULL,
+    quantity integer
+);
+
+CREATE TABLE public.review (
+    review_id integer NOT NULL,
+    product_id integer,
+    customer_id integer,
+    rating integer,
+    comment text,
+    review_date timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    images text,
+    CONSTRAINT review_rating_check CHECK (((rating >= 1) AND (rating <= 5)))
 );
 
 
+-- =================================================================
+-- PHẦN 3: CHÈN DỮ LIỆU MỚI VÀO CÁC BẢNG
+-- =================================================================
 
--- Brand: 10 popular sportswear brands
-INSERT INTO Brand (Brand_ID, Brand_Name, Description, Logo_URL, Origin_Country) VALUES
+-- Brand
+INSERT INTO Brand (brand_id, brand_name, description, logo_url, origin_country) VALUES
 (1, 'Nike', 'Leading sportswear and sneaker brand', 'https://example.com/logo_nike.png', 'USA'),
 (2, 'Adidas', 'Global sportswear and athletic gear manufacturer', 'https://example.com/logo_adidas.png', 'Germany'),
 (3, 'Puma', 'Athletic footwear and casual apparel', 'https://example.com/logo_puma.png', 'Germany'),
@@ -151,8 +158,8 @@ INSERT INTO Brand (Brand_ID, Brand_Name, Description, Logo_URL, Origin_Country) 
 (9, 'Skechers', 'Comfort-focused footwear and sneakers', 'https://example.com/logo_skechers.png', 'USA'),
 (10, 'Vans', 'Skateboarding shoes and streetwear', 'https://example.com/logo_vans.png', 'USA');
 
--- Product_Category: Unchanged, as it aligns with requirements
-INSERT INTO Product_Category (Category_ID, Parent_Category_ID, Category_Name, Description) VALUES
+-- Product_Category
+INSERT INTO Product_Category (category_id, parent_category_id, category_name, description) VALUES
 (1, NULL, 'Footwear', 'All types of shoes and sandals'),
 (2, NULL, 'Apparel', 'Clothing items for sports and casual wear'),
 (3, NULL, 'Accessories', 'Fashion and sports accessories'),
@@ -173,31 +180,31 @@ INSERT INTO Product_Category (Category_ID, Parent_Category_ID, Category_Name, De
 (18, 5, 'Duffel Bags', 'Large bags for gym or travel'),
 (19, 5, 'Waist Packs', 'Compact waist bags for carrying essentials');
 
--- Customer: Unchanged, as it aligns with requirements
-INSERT INTO Customer (Customer_ID, Email, Phone, Name, Address) VALUES
-(1, 'john.doe@example.com', '1234567890', 'John Doe', '123 Main St, New York, NY'),
-(2, 'jane.smith@example.com', '0987654321', 'Jane Smith', '456 Elm St, Los Angeles, CA'),
-(3, 'alice.nguyen@example.com', '0912345678', 'Alice Nguyen', '789 Oak St, Chicago, IL'),
-(4, 'bob.tanaka@example.com', '0801234567', 'Bob Tanaka', '321 Pine St, Tokyo, Japan'),
-(5, 'emma.wang@example.com', '0709876543', 'Emma Wang', '654 Maple St, Beijing, China'),
-(6, 'lucas.martin@example.com', '0612345678', 'Lucas Martin', '987 Birch St, Paris, France'),
-(7, 'sofia.lee@example.com', '0501122334', 'Sofia Lee', '147 Cedar St, Seoul, South Korea'),
-(8, 'liam.kim@example.com', '0402233445', 'Liam Kim', '258 Walnut St, Busan, South Korea'),
-(9, 'olivia.chen@example.com', '0303344556', 'Olivia Chen', '369 Chestnut St, Taipei, Taiwan'),
-(10, 'noah.tran@example.com', '0204455667', 'Noah Tran', '741 Spruce St, Hanoi, Vietnam'),
-(11, 'ava.saito@example.com', '0905566778', 'Ava Saito', '852 Willow St, Osaka, Japan'),
-(12, 'mason.kawasaki@example.com', '0816677889', 'Mason Kawasaki', '963 Poplar St, Kyoto, Japan'),
-(13, 'mia.hoang@example.com', '0827788990', 'Mia Hoang', '159 Aspen St, Ho Chi Minh City, Vietnam'),
-(14, 'ethan.yamada@example.com', '0838899001', 'Ethan Yamada', '753 Fir St, Sapporo, Japan'),
-(15, 'isabella.takahashi@example.com', '0849900112', 'Isabella Takahashi', '456 Redwood St, Nagoya, Japan'),
-(16, 'logan.pham@example.com', '0851011121', 'Logan Pham', '654 Sycamore St, Da Nang, Vietnam'),
-(17, 'amelia.nakamura@example.com', '0862122232', 'Amelia Nakamura', '987 Palm St, Fukuoka, Japan'),
-(18, 'james.vo@example.com', '0873233343', 'James Vo', '321 Dogwood St, Can Tho, Vietnam'),
-(19, 'charlotte.ito@example.com', '0884344454', 'Charlotte Ito', '147 Beech St, Kobe, Japan'),
-(20, 'benjamin.truong@example.com', '0895455565', 'Benjamin Truong', '258 Cedar St, Hue, Vietnam');
+-- Customer (Updated emails)
+INSERT INTO Customer (customer_id, email, phone, name, address) VALUES
+(1, 'john.doe@gmail.com', '1234567890', 'John Doe', '123 Main St, New York, NY'),
+(2, 'jane.smith@gmail.com', '0987654321', 'Jane Smith', '456 Elm St, Los Angeles, CA'),
+(3, 'alice.nguyen@gmail.com', '0912345678', 'Alice Nguyen', '789 Oak St, Chicago, IL'),
+(4, 'bob.tanaka@gmail.com', '0801234567', 'Bob Tanaka', '321 Pine St, Tokyo, Japan'),
+(5, 'emma.wang@gmail.com', '0709876543', 'Emma Wang', '654 Maple St, Beijing, China'),
+(6, 'lucas.martin@gmail.com', '0612345678', 'Lucas Martin', '987 Birch St, Paris, France'),
+(7, 'sofia.lee@gmail.com', '0501122334', 'Sofia Lee', '147 Cedar St, Seoul, South Korea'),
+(8, 'liam.kim@gmail.com', '0402233445', 'Liam Kim', '258 Walnut St, Busan, South Korea'),
+(9, 'olivia.chen@gmail.com', '0303344556', 'Olivia Chen', '369 Chestnut St, Taipei, Taiwan'),
+(10, 'noah.tran@gmail.com', '0204455667', 'Noah Tran', '741 Spruce St, Hanoi, Vietnam'),
+(11, 'ava.saito@gmail.com', '0905566778', 'Ava Saito', '852 Willow St, Osaka, Japan'),
+(12, 'mason.kawasaki@gmail.com', '0816677889', 'Mason Kawasaki', '963 Poplar St, Kyoto, Japan'),
+(13, 'mia.hoang@gmail.com', '0827788990', 'Mia Hoang', '159 Aspen St, Ho Chi Minh City, Vietnam'),
+(14, 'ethan.yamada@gmail.com', '0838899001', 'Ethan Yamada', '753 Fir St, Sapporo, Japan'),
+(15, 'isabella.takahashi@gmail.com', '0849900112', 'Isabella Takahashi', '456 Redwood St, Nagoya, Japan'),
+(16, 'logan.pham@gmail.com', '0851011121', 'Logan Pham', '654 Sycamore St, Da Nang, Vietnam'),
+(17, 'amelia.nakamura@gmail.com', '0862122232', 'Amelia Nakamura', '987 Palm St, Fukuoka, Japan'),
+(18, 'james.vo@gmail.com', '0873233343', 'James Vo', '321 Dogwood St, Can Tho, Vietnam'),
+(19, 'charlotte.ito@gmail.com', '0884344454', 'Charlotte Ito', '147 Beech St, Kobe, Japan'),
+(20, 'benjamin.truong@gmail.com', '0895455565', 'Benjamin Truong', '258 Cedar St, Hue, Vietnam');
 
--- Payment_Method: 10 common payment methods
-INSERT INTO Payment_Method (Payment_Method_ID, Method_Name, Description) VALUES
+-- Payment_Method
+INSERT INTO Payment_Method (payment_method_id, method_name, description) VALUES
 (1, 'Credit Card', 'Visa, MasterCard, or other credit cards'),
 (2, 'Debit Card', 'Linked bank debit cards'),
 (3, 'PayPal', 'Online payment via PayPal'),
@@ -209,16 +216,16 @@ INSERT INTO Payment_Method (Payment_Method_ID, Method_Name, Description) VALUES
 (9, 'Alipay', 'Popular digital wallet in China'),
 (10, 'WeChat Pay', 'Mobile payment integrated with WeChat');
 
--- Shipping_Method: 5 common shipping methods
-INSERT INTO Shipping_Method (Shipping_Method_ID, Method_Name, Description, Cost_per_product, average_delivery_time_per_km) VALUES
+-- Shipping_Method
+INSERT INTO Shipping_Method (shipping_method_id, method_name, description, cost_per_product, average_delivery_time_per_km) VALUES
 (1, 'Standard Shipping', 'Basic delivery with standard timing', 2.50, 0.60),
 (2, 'Express Shipping', 'Fast delivery within 1–2 days', 5.00, 0.40),
 (3, 'Same-Day Delivery', 'Delivery on the same day of order', 10.00, 0.15),
 (4, 'In-Store Pickup', 'Customer picks up item in-store', 0.00, 0.00),
 (5, 'International Standard', 'Standard international delivery', 12.00, 0.50);
 
--- Shipping_Address: Fixed inconsistencies (invalid data, missing fields)
-INSERT INTO Shipping_Address (Address_ID, Customer_ID, Receiver_Name, Receiver_Phone, Country, City, Province_State, Postal_Code, Is_Default) VALUES
+-- Shipping_Address
+INSERT INTO Shipping_Address (address_id, customer_id, receiver_name, receiver_phone, country, city, province_state, postal_code, is_default) VALUES
 (1, 1, 'John Doe', '1234567890', 'USA', 'New York', 'NY', '10001', TRUE),
 (2, 2, 'Jane Smith', '0987654321', 'USA', 'Los Angeles', 'CA', '90001', TRUE),
 (3, 3, 'Alice Nguyen', '0912345678', 'USA', 'Chicago', 'IL', '60601', TRUE),
@@ -240,8 +247,8 @@ INSERT INTO Shipping_Address (Address_ID, Customer_ID, Receiver_Name, Receiver_P
 (19, 19, 'Charlotte Ito', '0884344454', 'Japan', 'Kobe', 'Hyogo', '650-0001', TRUE),
 (20, 20, 'Benjamin Truong', '0895455565', 'Vietnam', 'Hue', 'Thua Thien-Hue', '530000', TRUE);
 
--- Promotion: 10 promotions with varied types and statuses
-INSERT INTO Promotion (Promotion_ID, Description, Discount_Type, Discount_Value, Start_Date, End_Date, Coupon_Code, Minimum_Order, Status) VALUES
+-- Promotion
+INSERT INTO Promotion (promotion_id, description, discount_type, discount_value, start_date, end_date, coupon_code, minimum_order, status) VALUES
 (1, 'Summer Sale 10% Off', 'percentage', 10.00, '2025-06-01', '2025-06-30', 'SUMMER10', 50.00, 'active'),
 (2, '$15 Off Your Order', 'fixed_amount', 15.00, '2025-07-01', '2025-07-15', 'SAVE15', 75.00, 'active'),
 (3, 'Black Friday 25%', 'percentage', 25.00, '2025-11-28', '2025-11-28', 'BLACK25', 100.00, 'inactive'),
@@ -253,34 +260,31 @@ INSERT INTO Promotion (Promotion_ID, Description, Discount_Type, Discount_Value,
 (9, 'Birthday Promo 15%', 'percentage', 15.00, '2025-01-01', '2025-12-31', 'BDAY15', 30.00, 'active'),
 (10, 'Refer a Friend $5', 'fixed_amount', 5.00, '2025-01-01', '2025-12-31', 'REFER5', 10.00, 'active');
 
--- Product: Realistic names, descriptions, and specifications, with timestamps
-INSERT INTO Product (Product_ID, Product_Name, Category_ID, Brand_ID, Description, Price, Stock_Quantity, Image_URLs, Specifications, Created_Date, Updated_Date) VALUES
-(1, 'Nike Air Zoom Pegasus 39', 6, 1, 'High-performance running shoes with Zoom Air cushioning for responsiveness.', 130.00, 100, 'https://example.com/nike_pegasus.jpg', 'Weight: 10.2 oz, Drop: 10mm, Cushioning: Zoom Air', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(2, 'Adidas Ultraboost 22', 6, 2, 'Premium running shoes with Boost midsole for energy return.', 180.00, 80, 'https://example.com/adidas_ultraboost.jpg', 'Weight: 11.8 oz, Drop: 10mm, Upper: Primeknit', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(3, 'Puma RS-X3 Puzzle Sneakers', 7, 3, 'Stylish sneakers with bold design and cushioned sole.', 110.00, 120, 'https://example.com/puma_rsx3.jpg', 'Material: Mesh/Synthetic, Sole: Rubber', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(4, 'Under Armour Charged Bandana', 14, 4, 'Lightweight running cap with moisture-wicking technology.', 25.00, 200, 'https://example.com/ua_bandana.jpg', 'Material: Polyester, Fit: Adjustable', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(5, 'Asics Gel-Kayano 29', 6, 5, 'Stability running shoes with Gel cushioning for comfort.', 160.00, 60, 'https://example.com/asics_kayano.jpg', 'Weight: 10.9 oz, Drop: 10mm, Cushioning: Gel', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(6, 'New Balance Fresh Foam T-Shirt', 10, 6, 'Breathable athletic t-shirt with NB Dry technology.', 35.00, 150, 'https://example.com/nb_tshirt.jpg', 'Material: Polyester, Technology: NB Dry', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(7, 'Converse Chuck 70 Low Top', 7, 7, 'Classic low-top sneakers with canvas upper.', 80.00, 90, 'https://example.com/converse_chuck70.jpg', 'Material: Canvas, Sole: Rubber', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(8, 'Fila Heritage Crew Socks', 15, 8, 'Comfortable athletic socks with cushioned sole.', 12.00, 300, 'https://example.com/fila_socks.jpg', 'Material: Cotton Blend, Pack: 3 pairs', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(9, 'Skechers D-Lites Sneakers', 7, 9, 'Lightweight sneakers with Air-Cooled Memory Foam.', 65.00, 150, 'https://example.com/skechers_dlites.jpg', 'Material: Leather/Mesh, Cushioning: Memory Foam', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(10, 'Vans Old Skool Sneakers', 7, 10, 'Iconic skate shoes with suede and canvas upper.', 70.00, 100, 'https://example.com/vans_oldskool.jpg', 'Material: Suede/Canvas, Sole: Waffle Rubber', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(11, 'Nike React Infinity Run 3', 6, 1, 'Running shoes with React foam for smooth ride.', 150.00, 70, 'https://example.com/nike_react.jpg', 'Weight: 10.5 oz, Drop: 9mm, Cushioning: React Foam', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(12, 'Adidas Performance Shorts', 11, 2, 'Lightweight shorts with Aeroready moisture-wicking.', 40.00, 120, 'https://example.com/adidas_shorts.jpg', 'Material: Polyester, Technology: Aeroready', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(13, 'Puma Essential Backpack', 17, 3, 'Durable backpack with padded straps.', 45.00, 80, 'https://example.com/puma_backpack.jpg', 'Material: Polyester, Capacity: 25L', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(14, 'Under Armour Hustle Jacket', 12, 4, 'Water-resistant jacket with fleece lining.', 90.00, 60, 'https://example.com/ua_jacket.jpg', 'Material: Polyester, Lining: Fleece', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(15, 'Asics Gel-Nimbus 24', 6, 5, 'Cushioned running shoes with Gel technology.', 150.00, 50, 'https://example.com/asics_nimbus.jpg', 'Weight: 11.1 oz, Drop: 10mm, Cushioning: Gel', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(16, 'New Balance Impact Shorts', 11, 6, 'Athletic shorts with inner brief.', 35.00, 100, 'https://example.com/nb_shorts.jpg', 'Material: Polyester, Length: 7-inch', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(17, 'Converse Slide Sandals', 8, 7, 'Comfortable sandals with cushioned footbed.', 30.00, 150, 'https://example.com/converse_sandals.jpg', 'Material: Synthetic, Sole: EVA', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(18, 'Fila Classic Cap', 14, 8, 'Adjustable cap with embroidered logo.', 20.00, 200, 'https://example.com/fila_cap.jpg', 'Material: Cotton, Fit: Adjustable', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(19, 'Skechers Go Run Fast', 6, 9, 'Lightweight running shoes with responsive cushioning.', 80.00, 90, 'https://example.com/skechers_gorun.jpg', 'Weight: 8.5 oz, Drop: 8mm, Cushioning: Hyper Burst', '2025-01-01 10:00:00', '2025-01-01 10:00:00'),
-(20, 'Vans Classic Duffel Bag', 18, 10, 'Spacious duffel bag with side pocket.', 50.00, 70, 'https://example.com/vans_duffel.jpg', 'Material: Polyester, Capacity: 30L', '2025-01-01 10:00:00', '2025-01-01 10:00:00');
+-- Product (Diverse and realistic data)
+INSERT INTO Product (product_id, product_name, category_id, brand_id, description, price, stock_quantity, image_urls, specifications, created_date, updated_date) VALUES
+(1, 'Nike Air Max 270', 7, 1, 'Features the first-ever Max Air unit created specifically for Nike Sportswear.', 150.00, 100, 'https://example.com/nike_airmax.jpg', 'Color: Black/White, Upper: Knit', '2025-01-15 10:00:00', '2025-01-15 10:00:00'),
+(2, 'Adidas Ultraboost Light', 6, 2, 'Our lightest Ultraboost ever, made with 30% lighter BOOST material.', 180.00, 80, 'https://example.com/adidas_ultraboost.jpg', 'Weight: 10.5 oz, Midsole: Light BOOST', '2025-01-15 10:00:00', '2025-01-15 10:00:00'),
+(3, 'Puma Suede Classic XXI', 7, 3, 'An iconic sneaker that has been a style staple for over 50 years.', 75.00, 120, 'https://example.com/puma_suede.jpg', 'Material: Suede, Sole: Rubber', '2025-02-01 11:00:00', '2025-02-01 11:00:00'),
+(4, 'Under Armour Tech 2.0 T-Shirt', 10, 4, 'Loose, light, and it keeps you cool. It''s everything you need.', 25.00, 200, 'https://example.com/ua_tech_tee.jpg', 'Fabric: UA Tech, Fit: Loose', '2025-02-01 11:00:00', '2025-02-01 11:00:00'),
+(5, 'Asics Gel-Kayano 30', 6, 5, 'Provides advanced stability and softer cushioning for a comfortable run.', 160.00, 60, 'https://example.com/asics_kayano.jpg', 'Cushioning: GEL Technology, Support: 4D GUIDANCE SYSTEM', '2025-02-10 09:30:00', '2025-02-10 09:30:00'),
+(6, 'New Balance 990v6', 7, 6, 'The 990v6 embraces a streamlined approach with a focus on performance.', 200.00, 50, 'https://example.com/nb_990v6.jpg', 'Midsole: FuelCell, Upper: Suede/Mesh', '2025-02-20 14:00:00', '2025-02-20 14:00:00'),
+(7, 'Converse Chuck Taylor All Star', 7, 7, 'The timeless and iconic high-top sneaker.', 60.00, 150, 'https://example.com/converse_chuck.jpg', 'Upper: Canvas, Outsole: Diamond Tread', '2025-03-05 16:20:00', '2025-03-05 16:20:00'),
+(8, 'Fila Disruptor II Premium', 7, 8, 'The iconic chunky sneaker with a bold, retro look.', 65.00, 90, 'https://example.com/fila_disruptor.jpg', 'Material: Leather, Midsole: EVA', '2025-03-10 10:10:00', '2025-03-10 10:10:00'),
+(9, 'Skechers Go Walk Arch Fit', 7, 9, 'Get all the support you need for your long walks with Arch Fit technology.', 85.00, 110, 'https://example.com/skechers_gowalk.jpg', 'Insole: Arch Fit, Outsole: High-rebound', '2025-03-12 18:00:00', '2025-03-12 18:00:00'),
+(10, 'Vans Old Skool Backpack', 17, 10, 'A classic backpack with a large main compartment and a front zip pocket.', 45.00, 130, 'https://example.com/vans_backpack.jpg', 'Capacity: 22L, Material: Polyester', '2025-03-15 11:45:00', '2025-03-15 11:45:00'),
+(11, 'Nike Dri-FIT Legend Tee', 10, 1, 'A soft, sweat-wicking tee to keep you dry and comfortable.', 30.00, 250, 'https://example.com/nike_drifit_tee.jpg', 'Technology: Dri-FIT, Material: Polyester', '2025-03-20 09:00:00', '2025-03-20 09:00:00'),
+(12, 'Adidas Tiro 23 Training Pants', 13, 2, 'Slim-fitting pants with AEROREADY to keep you dry on the pitch.', 50.00, 140, 'https://example.com/adidas_tiro.jpg', 'Pockets: Zip Pockets, Fit: Slim', '2025-03-22 13:00:00', '2025-03-22 13:00:00'),
+(13, 'Puma Essentials Logo Hoodie', 12, 3, 'A classic hoodie for everyday comfort and style.', 55.00, 100, 'https://example.com/puma_hoodie.jpg', 'Material: Cotton/Polyester, Lining: Fleece', '2025-04-01 10:00:00', '2025-04-01 10:00:00'),
+(14, 'Under Armour Play Up Shorts 3.0', 11, 4, 'Lightweight knit construction delivers superior comfort & breathability.', 30.00, 180, 'https://example.com/ua_shorts.jpg', 'Inseam: 3", Pockets: Side hand pockets', '2025-04-02 15:00:00', '2025-04-02 15:00:00'),
+(15, 'Asics GT-2000 12', 6, 5, 'A versatile stability trainer that’s functional for various distances.', 140.00, 75, 'https://example.com/asics_gt2000.jpg', 'Support: Stability, Drop: 8mm', '2025-04-05 12:00:00', '2025-04-05 12:00:00'),
+(16, 'New Balance 574 Core', 7, 6, 'A collectible icon, the 574 is a hybrid road/trail design.', 85.00, 160, 'https://example.com/nb_574.jpg', 'Cushioning: ENCAP, Upper: Suede/Mesh', '2025-04-10 17:00:00', '2025-04-10 17:00:00'),
+(17, 'Converse Run Star Hike', 7, 7, 'A chunky platform and jagged rubber sole put an unexpected twist on your everyday Chucks.', 110.00, 85, 'https://example.com/converse_runstar.jpg', 'Platform: Lugged, Insole: SmartFOAM', '2025-04-11 11:30:00', '2025-04-11 11:30:00'),
+(18, 'Fila Unisex Bucket Hat', 14, 8, 'A classic bucket hat for a cool, casual look.', 25.00, 220, 'https://example.com/fila_bucket_hat.jpg', 'Material: 100% Cotton Twill', '2025-04-12 14:00:00', '2025-04-12 14:00:00'),
+(19, 'Skechers Max Cushioning Elite', 6, 9, 'Experience ultimate comfort and response with Skechers Max Cushioning.', 95.00, 105, 'https://example.com/skechers_maxcushion.jpg', 'Platform: ULTRA GO, Insole: Goga Mat', '2025-04-15 09:00:00', '2025-04-15 09:00:00'),
+(20, 'Vans Ward Cross Body Pack', 19, 10, 'A durable waist pack for on-the-go convenience.', 30.00, 190, 'https://example.com/vans_waistpack.jpg', 'Material: CORDURA fabrics', '2025-04-18 16:00:00', '2025-04-18 16:00:00');
 
--- Order: Updated to reference valid IDs and use new schema
-INSERT INTO "Order" (
-    Order_ID, Customer_ID, Payment_Method_ID, Shipping_Method_ID, Shipping_Address_ID, Promotion_ID,
-    Order_Date, Total_Amount, Shipping_Fee, Discount, Payment_Status, Order_Status, Estimated_Delivery_Date, Note
-) VALUES
+-- Order
+INSERT INTO "Order" (order_id, customer_id, payment_method_id, shipping_method_id, shipping_address_id, promotion_id, order_date, total_amount, shipping_fee, discount, payment_status, order_status, estimated_delivery_date, note) VALUES
 (1, 1, 1, 1, 1, 1, '2025-04-01 10:30:00', 150.00, 5.00, 15.00, 'paid', 'Processing', '2025-04-05', 'Leave at front door'),
 (2, 2, 2, 2, 2, 2, '2025-04-02 15:00:00', 200.00, 10.00, 15.00, 'paid', 'Shipped', '2025-04-07', ''),
 (3, 3, 1, 1, 3, 3, '2025-04-03 09:45:00', 80.00, 4.00, 20.00, 'pending', 'Pending', '2025-04-08', 'Call before delivery'),
@@ -302,56 +306,111 @@ INSERT INTO "Order" (
 (19, 4, 1, 2, 4, NULL, '2025-04-19 13:25:00', 65.00, 4.00, 0.00, 'paid', 'Delivered', '2025-04-23', ''),
 (20, 5, 2, 5, 5, 3, '2025-04-20 09:40:00', 190.00, 12.00, 47.50, 'paid', 'Shipped', '2025-04-24', 'Gift order');
 
--- Order_Item: Updated to reference valid Product_IDs
-INSERT INTO Order_Item (Order_ID, Product_ID, Quantity) VALUES
-(1, 1, 2),
-(1, 3, 1),
-(2, 2, 3),
-(2, 4, 2),
-(3, 1, 2),
-(3, 5, 1),
-(4, 3, 2),
-(4, 2, 3),
-(5, 4, 1),
-(5, 1, 3),
-(6, 2, 2),
-(6, 3, 1),
-(7, 5, 2),
-(8, 4, 3),
-(9, 1, 1),
-(9, 2, 2),
-(10, 3, 2),
-(11, 1, 2),
-(12, 4, 2),
-(13, 5, 1),
-(14, 2, 3),
-(15, 3, 2),
-(16, 1, 1),
-(17, 4, 2),
-(18, 5, 2),
-(19, 2, 1),
-(20, 3, 3);
+-- Order_Item (Updated to reference new products)
+INSERT INTO Order_Item (order_id, product_id, quantity) VALUES
+(1, 1, 1), (1, 11, 2), (2, 2, 1), (2, 12, 1), (3, 3, 1), (4, 4, 3), (4, 14, 1),
+(5, 5, 1), (6, 6, 1), (7, 7, 2), (8, 8, 1), (9, 9, 2), (9, 19, 1), (10, 10, 1),
+(11, 15, 1), (12, 16, 2), (13, 17, 1), (14, 18, 4), (15, 13, 1), (16, 1, 1),
+(17, 4, 1), (18, 5, 1), (19, 2, 1), (20, 3, 1);
 
--- Review: Updated with Review_Date and valid IDs
-INSERT INTO Review (Review_ID, Product_ID, Customer_ID, Rating, Comment, Review_Date, Images) VALUES
-(1, 1, 1, 5, 'Love these running shoes, super comfortable!', '2025-04-05 12:00:00', 'https://example.com/review_nike_pegasus.jpg'),
-(2, 2, 2, 4, 'Great energy return, but a bit pricey.', '2025-04-06 14:00:00', 'https://example.com/review_adidas_ultraboost.jpg'),
-(3, 3, 3, 3, 'Stylish but not ideal for long walks.', '2025-04-07 10:00:00', 'https://example.com/review_puma_rsx3.jpg'),
-(4, 4, 4, 5, 'Perfect cap for running, stays in place.', '2025-04-08 16:00:00', 'https://example.com/review_ua_bandana.jpg'),
-(5, 5, 5, 2, 'Expected better durability for the price.', '2025-04-09 11:00:00', 'https://example.com/review_asics_kayano.jpg'),
-(6, 6, 6, 4, 'Really soft and breathable t-shirt.', '2025-04-10 13:00:00', 'https://example.com/review_nb_tshirt.jpg'),
-(7, 7, 7, 5, 'Classic style, goes with everything.', '2025-04-11 09:00:00', 'https://example.com/review_converse_chuck70.jpg'),
-(8, 8, 8, 3, 'Decent socks, but wear out quickly.', '2025-04-12 15:00:00', 'https://example.com/review_fila_socks.jpg'),
-(9, 9, 9, 4, 'Comfortable sneakers for daily wear.', '2025-04-13 10:00:00', 'https://example.com/review_skechers_dlites.jpg'),
-(10, 10, 10, 1, 'Not durable, sole wore out fast.', '2025-04-14 12:00:00', 'https://example.com/review_vans_oldskool.jpg'),
-(11, 11, 11, 5, 'Smooth ride, great for long runs.', '2025-04-15 14:00:00', 'https://example.com/review_nike_react.jpg'),
-(12, 12, 12, 2, 'Shorts are okay, but sizing is off.', '2025-04-16 11:00:00', 'https://example.com/review_adidas_shorts.jpg'),
-(13, 13, 13, 4, 'Spacious and sturdy backpack.', '2025-04-17 13:00:00', 'https://example.com/review_puma_backpack.jpg'),
-(14, 14, 14, 5, 'Warm and lightweight jacket.', '2025-04-18 15:00:00', 'https://example.com/review_ua_jacket.jpg'),
-(15, 15, 15, 3, 'Good cushioning, but a bit heavy.', '2025-04-19 10:00:00', 'https://example.com/review_asics_nimbus.jpg'),
-(16, 16, 16, 4, 'Comfortable shorts for workouts.', '2025-04-20 12:00:00', 'https://example.com/review_nb_shorts.jpg'),
-(17, 17, 17, 2, 'Sandals are stiff, not very comfy.', '2025-04-21 14:00:00', 'https://example.com/review_converse_sandals.jpg'),
-(18, 18, 18, 5, 'Great cap, love the design.', '2025-04-22 11:00:00', 'https://example.com/review_fila_cap.jpg'),
-(19, 19, 19, 3, 'Average running shoes, nothing special.', '2025-04-23 13:00:00', 'https://example.com/review_skechers_gorun.jpg'),
-(20, 20, 20, 4, 'Solid duffel bag, good for gym.', '2025-04-24 15:00:00', 'https://example.com/review_vans_duffel.jpg');
+-- Review (Updated with relevant comments for new products)
+INSERT INTO Review (review_id, product_id, customer_id, rating, comment, review_date, images) VALUES
+(1, 1, 1, 5, 'The Air Max 270 is so comfortable for everyday wear!', '2025-04-05 12:00:00', 'https://example.com/review_airmax.jpg'),
+(2, 2, 2, 4, 'Ultraboost has amazing energy return, but it is a bit pricey.', '2025-04-06 14:00:00', 'https://example.com/review_ultraboost.jpg'),
+(3, 3, 3, 5, 'Love the classic look of the Puma Suede. Goes with everything.', '2025-04-07 10:00:00', NULL),
+(4, 4, 4, 4, 'This UA shirt is great for the gym. Very breathable.', '2025-04-08 16:00:00', 'https://example.com/review_uatee.jpg'),
+(5, 5, 5, 5, 'Asics Gel-Kayano provides the best stability for my long runs. Highly recommend.', '2025-04-09 11:00:00', NULL),
+(6, 6, 6, 4, 'The New Balance 990v6 is incredibly well-made. Worth the price.', '2025-04-10 13:00:00', 'https://example.com/review_nb990.jpg'),
+(7, 7, 7, 5, 'Can never go wrong with a classic pair of Chucks.', '2025-04-11 09:00:00', NULL),
+(8, 8, 8, 3, 'The Fila Disruptors are stylish but a bit too heavy for me.', '2025-04-12 15:00:00', 'https://example.com/review_disruptor.jpg'),
+(9, 9, 9, 5, 'Skechers Arch Fit is a lifesaver for my flat feet. So comfortable!', '2025-04-13 10:00:00', NULL),
+(10, 10, 10, 4, 'This Vans backpack is durable and has plenty of space.', '2025-04-14 12:00:00', NULL),
+(11, 11, 1, 5, 'Another great Dri-FIT shirt from Nike. Perfect for workouts.', '2025-04-15 14:00:00', 'https://example.com/review_drifit.jpg'),
+(12, 12, 2, 4, 'The Tiro pants are perfect for training or just lounging.', '2025-04-16 11:00:00', NULL),
+(13, 13, 3, 4, 'Cozy hoodie, good quality.', '2025-04-17 13:00:00', 'https://example.com/review_pumahoodie.jpg'),
+(14, 14, 4, 3, 'These UA shorts are a bit shorter than I expected.', '2025-04-18 15:00:00', NULL),
+(15, 15, 5, 5, 'The GT-2000 is my go-to running shoe. Reliable and comfortable.', '2025-04-19 10:00:00', 'https://example.com/review_gt2000.jpg'),
+(16, 16, 6, 4, 'New Balance 574 is a stylish and comfortable retro sneaker.', '2025-04-20 12:00:00', NULL),
+(17, 17, 7, 3, 'The Run Star Hike platform is cool but takes some getting used to.', '2025-04-21 14:00:00', 'https://example.com/review_runstar.jpg'),
+(18, 18, 8, 5, 'Love this Fila bucket hat!', '2025-04-22 11:00:00', NULL),
+(19, 19, 9, 4, 'Very light and responsive shoes from Skechers.', '2025-04-23 13:00:00', 'https://example.com/review_maxcushion.jpg'),
+(20, 20, 10, 5, 'Perfect size for a waist pack. Great quality from Vans.', '2025-04-24 15:00:00', NULL);
 
+-- =================================================================
+-- PHẦN 4: THIẾT LẬP ID TỰ TĂNG (SEQUENCES)
+-- =================================================================
+
+-- Tạo Sequences
+CREATE SEQUENCE public."Order_order_id_seq" AS integer;
+CREATE SEQUENCE public.brand_brand_id_seq AS integer;
+CREATE SEQUENCE public.customer_customer_id_seq AS integer;
+CREATE SEQUENCE public.payment_method_payment_method_id_seq AS integer;
+CREATE SEQUENCE public.product_category_category_id_seq AS integer;
+CREATE SEQUENCE public.product_product_id_seq AS integer;
+CREATE SEQUENCE public.promotion_promotion_id_seq AS integer;
+CREATE SEQUENCE public.review_review_id_seq AS integer;
+CREATE SEQUENCE public.shipping_address_address_id_seq AS integer;
+CREATE SEQUENCE public.shipping_method_shipping_method_id_seq AS integer;
+
+-- Gán Sequences làm giá trị mặc định cho các cột ID
+ALTER TABLE public."Order" ALTER COLUMN order_id SET DEFAULT nextval('public."Order_order_id_seq"'::regclass);
+ALTER TABLE public.brand ALTER COLUMN brand_id SET DEFAULT nextval('public.brand_brand_id_seq'::regclass);
+ALTER TABLE public.customer ALTER COLUMN customer_id SET DEFAULT nextval('public.customer_customer_id_seq'::regclass);
+ALTER TABLE public.payment_method ALTER COLUMN payment_method_id SET DEFAULT nextval('public.payment_method_payment_method_id_seq'::regclass);
+ALTER TABLE public.product ALTER COLUMN product_id SET DEFAULT nextval('public.product_product_id_seq'::regclass);
+ALTER TABLE public.product_category ALTER COLUMN category_id SET DEFAULT nextval('public.product_category_category_id_seq'::regclass);
+ALTER TABLE public.promotion ALTER COLUMN promotion_id SET DEFAULT nextval('public.promotion_promotion_id_seq'::regclass);
+ALTER TABLE public.review ALTER COLUMN review_id SET DEFAULT nextval('public.review_review_id_seq'::regclass);
+ALTER TABLE public.shipping_address ALTER COLUMN address_id SET DEFAULT nextval('public.shipping_address_address_id_seq'::regclass);
+ALTER TABLE public.shipping_method ALTER COLUMN shipping_method_id SET DEFAULT nextval('public.shipping_method_shipping_method_id_seq'::regclass);
+
+-- Cập nhật giá trị hiện tại của Sequences để khớp với dữ liệu đã chèn
+SELECT setval('public.brand_brand_id_seq', (SELECT MAX(brand_id) FROM public.brand));
+SELECT setval('public.product_category_category_id_seq', (SELECT MAX(category_id) FROM public.product_category));
+SELECT setval('public.customer_customer_id_seq', (SELECT MAX(customer_id) FROM public.customer));
+SELECT setval('public.payment_method_payment_method_id_seq', (SELECT MAX(payment_method_id) FROM public.payment_method));
+SELECT setval('public.shipping_method_shipping_method_id_seq', (SELECT MAX(shipping_method_id) FROM public.shipping_method));
+SELECT setval('public.shipping_address_address_id_seq', (SELECT MAX(address_id) FROM public.shipping_address));
+SELECT setval('public.promotion_promotion_id_seq', (SELECT MAX(promotion_id) FROM public.promotion));
+SELECT setval('public.product_product_id_seq', (SELECT MAX(product_id) FROM public.product));
+SELECT setval('public."Order_order_id_seq"', (SELECT MAX(order_id) FROM public."Order"));
+SELECT setval('public.review_review_id_seq', (SELECT MAX(review_id) FROM public.review));
+
+
+-- =================================================================
+-- PHẦN 5: TẠO CÁC RÀNG BUỘC (CONSTRAINTS)
+-- =================================================================
+
+-- Khóa chính (Primary Keys)
+ALTER TABLE public."Order" ADD CONSTRAINT "Order_pkey" PRIMARY KEY (order_id);
+ALTER TABLE public.brand ADD CONSTRAINT brand_pkey PRIMARY KEY (brand_id);
+ALTER TABLE public.customer ADD CONSTRAINT customer_pkey PRIMARY KEY (customer_id);
+ALTER TABLE public.order_item ADD CONSTRAINT order_item_pkey PRIMARY KEY (order_id, product_id);
+ALTER TABLE public.payment_method ADD CONSTRAINT payment_method_pkey PRIMARY KEY (payment_method_id);
+ALTER TABLE public.product_category ADD CONSTRAINT product_category_pkey PRIMARY KEY (category_id);
+ALTER TABLE public.product ADD CONSTRAINT product_pkey PRIMARY KEY (product_id);
+ALTER TABLE public.promotion ADD CONSTRAINT promotion_pkey PRIMARY KEY (promotion_id);
+ALTER TABLE public.review ADD CONSTRAINT review_pkey PRIMARY KEY (review_id);
+ALTER TABLE public.shipping_address ADD CONSTRAINT shipping_address_pkey PRIMARY KEY (address_id);
+ALTER TABLE public.shipping_method ADD CONSTRAINT shipping_method_pkey PRIMARY KEY (shipping_method_id);
+
+-- Ràng buộc duy nhất (Unique Constraints)
+ALTER TABLE public.customer ADD CONSTRAINT customer_email_key UNIQUE (email);
+
+-- Khóa ngoại (Foreign Keys)
+ALTER TABLE public."Order" ADD CONSTRAINT "Order_customer_id_fkey" FOREIGN KEY (customer_id) REFERENCES public.customer(customer_id);
+ALTER TABLE public."Order" ADD CONSTRAINT "Order_payment_method_id_fkey" FOREIGN KEY (payment_method_id) REFERENCES public.payment_method(payment_method_id);
+ALTER TABLE public."Order" ADD CONSTRAINT "Order_promotion_id_fkey" FOREIGN KEY (promotion_id) REFERENCES public.promotion(promotion_id);
+ALTER TABLE public."Order" ADD CONSTRAINT "Order_shipping_address_id_fkey" FOREIGN KEY (shipping_address_id) REFERENCES public.shipping_address(address_id);
+ALTER TABLE public."Order" ADD CONSTRAINT "Order_shipping_method_id_fkey" FOREIGN KEY (shipping_method_id) REFERENCES public.shipping_method(shipping_method_id);
+ALTER TABLE public.order_item ADD CONSTRAINT order_item_order_id_fkey FOREIGN KEY (order_id) REFERENCES public."Order"(order_id);
+ALTER TABLE public.order_item ADD CONSTRAINT order_item_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.product(product_id);
+ALTER TABLE public.product ADD CONSTRAINT product_brand_id_fkey FOREIGN KEY (brand_id) REFERENCES public.brand(brand_id);
+ALTER TABLE public.product ADD CONSTRAINT product_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.product_category(category_id);
+ALTER TABLE public.product_category ADD CONSTRAINT product_category_parent_category_id_fkey FOREIGN KEY (parent_category_id) REFERENCES public.product_category(category_id);
+ALTER TABLE public.review ADD CONSTRAINT review_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customer(customer_id);
+ALTER TABLE public.review ADD CONSTRAINT review_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.product(product_id);
+ALTER TABLE public.shipping_address ADD CONSTRAINT shipping_address_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customer(customer_id);
+
+-- Kết thúc transaction và xác nhận các thay đổi
+COMMIT;
